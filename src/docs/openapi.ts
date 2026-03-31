@@ -195,7 +195,8 @@ export const openApiSpec: OpenAPIV3.Document = {
         type: "http",
         scheme: "bearer",
         bearerFormat: "JWT",
-        description: "Paste `accessToken` from POST /api/auth/login (or register) response body.",
+        description:
+          "Paste `accessToken` from POST /api/auth/login (or register) response body.",
       },
     },
     schemas: {
@@ -269,7 +270,8 @@ export const openApiSpec: OpenAPIV3.Document = {
               user: { $ref: "#/components/schemas/PublicUser" },
               accessToken: {
                 type: "string",
-                description: "Same JWT as the session cookie; use as Bearer if the cookie is not sent.",
+                description:
+                  "Same JWT as the session cookie; use as Bearer if the cookie is not sent.",
               },
             },
             required: ["user", "accessToken"],

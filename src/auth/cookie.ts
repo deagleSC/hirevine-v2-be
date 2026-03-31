@@ -8,8 +8,7 @@ function authCookieShape(): Pick<
   const isProd = env.nodeEnv === "production";
   /** Production defaults to Secure cookies (HTTPS). Set AUTH_COOKIE_SECURE=false for local http:// testing with NODE_ENV=production. */
   const secure =
-    isProd &&
-    process.env.AUTH_COOKIE_SECURE?.trim().toLowerCase() !== "false";
+    isProd && process.env.AUTH_COOKIE_SECURE?.trim().toLowerCase() !== "false";
   const raw = process.env.AUTH_COOKIE_SAMESITE?.trim().toLowerCase();
   let sameSite: CookieOptions["sameSite"] =
     raw === "lax" || raw === "strict" || raw === "none"
