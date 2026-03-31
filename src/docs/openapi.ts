@@ -21,6 +21,21 @@ export const openApiSpec: OpenAPIV3.Document = {
       description:
         "Email/password; JWT in HTTP-only cookie and optional Bearer header (`Authorization: Bearer <accessToken>`)",
     },
+    {
+      name: "Organizations",
+      description:
+        "Employer orgs. Recruiters create one org, then manage jobs under it. Candidates usually have no org.",
+    },
+    {
+      name: "Jobs",
+      description:
+        "Job postings (org-scoped for writes). Public browse of active jobs; candidates apply across orgs.",
+    },
+    {
+      name: "Applications",
+      description:
+        "Candidate application history (`/me`). Apply via `POST /api/jobs/{jobId}/apply`.",
+    },
   ],
   paths: {
     "/health": {
@@ -188,6 +203,562 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/organizations": {
+      post: {
+        tags: ["Organizations"],
+        summary: "Create organization",
+        operationId: "organizationsCreate",
+        description:
+          "Recruiter/admin only. Attaches your user to the new org. Fails if you already have an organization.",
+        security: [{}, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/OrganizationCreateRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/OrganizationCreateSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (e.g. candidate)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "409": {
+            description: "Already in an org or slug taken",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/organizations/me": {
+      get: {
+        tags: ["Organizations"],
+        summary: "Current organization",
+        operationId: "organizationsMe",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/OrganizationMeSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "No organization on account",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/browse": {
+      get: {
+        tags: ["Jobs"],
+        summary: "Browse active jobs",
+        operationId: "jobsBrowse",
+        description: "Public. Returns up to 50 active jobs (minimal fields).",
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobsBrowseSuccess" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs": {
+      get: {
+        tags: ["Jobs"],
+        summary: "List jobs in my organization",
+        operationId: "jobsList",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobsListSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "No organization or wrong role",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ["Jobs"],
+        summary: "Create job",
+        operationId: "jobsCreate",
+        security: [{}, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/JobCreateRequest" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobOneSuccessFull" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "No organization",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/{jobId}": {
+      get: {
+        tags: ["Jobs"],
+        summary: "Get job by id",
+        operationId: "jobsGetById",
+        description:
+          "Active jobs: public summary. Draft/paused/closed: recruiter/admin of owning org only.",
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobOneSuccessUnion" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized (non-active job)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+      patch: {
+        tags: ["Jobs"],
+        summary: "Update job",
+        operationId: "jobsPatch",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/JobPatchRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobOneSuccessFull" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Job not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/{jobId}/generate-pipeline": {
+      post: {
+        tags: ["Jobs"],
+        summary: "Generate 3-node pipeline from JD",
+        operationId: "jobsGeneratePipeline",
+        description:
+          "Recruiter/admin, org job. Uses OpenRouter + structured output. Job `description` must be ≥ 40 characters. Sets `pipeline` on the job (includes quiz answer keys — do not expose publicly).",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Pipeline saved on job",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobOneSuccessFull" },
+              },
+            },
+          },
+          "400": {
+            description: "Description too short or validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Job not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "502": {
+            description: "Upstream model / parse failure",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "503": {
+            description: "OPENROUTER_API_KEY not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/{jobId}/apply": {
+      post: {
+        tags: ["Jobs"],
+        summary: "Apply to job",
+        operationId: "jobsApply",
+        description:
+          "Candidate only. Job must be `active`. One application per candidate per job.",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ApplyRequest" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ApplySuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation or job not accepting applications",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (not a candidate)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Job not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "409": {
+            description: "Already applied",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/{jobId}/applications": {
+      get: {
+        tags: ["Jobs"],
+        summary: "List applications for a job",
+        operationId: "jobsListApplications",
+        description: "Recruiter/admin for the job’s organization only.",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/JobApplicationsListSuccess",
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Job not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/applications/me": {
+      get: {
+        tags: ["Applications"],
+        summary: "My applications",
+        operationId: "applicationsMe",
+        description: "Candidate only.",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ApplicationsMeSuccess",
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -303,6 +874,369 @@ export const openApiSpec: OpenAPIV3.Document = {
           password: { type: "string" },
         },
         required: ["email", "password"],
+      },
+      OrganizationPublic: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          slug: { type: "string" },
+        },
+        required: ["id", "name", "slug"],
+      },
+      OrganizationCreateRequest: {
+        type: "object",
+        properties: {
+          name: { type: "string", maxLength: 200 },
+          slug: {
+            type: "string",
+            maxLength: 64,
+            description:
+              "Lowercase; letters, numbers, single hyphens between segments.",
+          },
+        },
+        required: ["name", "slug"],
+      },
+      OrganizationCreateSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              organization: {
+                $ref: "#/components/schemas/OrganizationPublic",
+              },
+              user: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  email: { type: "string" },
+                  role: { type: "string" },
+                  organizationId: { type: "string" },
+                },
+                required: ["id", "email", "role", "organizationId"],
+              },
+            },
+            required: ["organization", "user"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      OrganizationMeSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              organization: {
+                $ref: "#/components/schemas/OrganizationPublic",
+              },
+            },
+            required: ["organization"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobPublic: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["draft", "active", "paused", "closed"],
+          },
+          organizationId: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+        required: [
+          "id",
+          "title",
+          "status",
+          "organizationId",
+          "createdAt",
+          "updatedAt",
+        ],
+      },
+      JobPipeline: {
+        type: "object",
+        description:
+          "version 1 — node1 resume rubric, node2 quiz (5 questions), node3 report instructions. Validated with Zod on write.",
+        properties: {
+          version: { type: "integer", enum: [1] },
+          node1: {
+            type: "object",
+            properties: {
+              rubric: { type: "string" },
+              mustHaveSkills: { type: "array", items: { type: "string" } },
+              niceToHaveSkills: { type: "array", items: { type: "string" } },
+              passThreshold: { type: "number" },
+            },
+            required: ["rubric"],
+          },
+          node2: {
+            type: "object",
+            properties: {
+              questions: {
+                type: "array",
+                items: { type: "object", additionalProperties: true },
+              },
+            },
+            required: ["questions"],
+          },
+          node3: {
+            type: "object",
+            properties: {
+              reportInstructions: { type: "string" },
+              scoringWeightsHint: { type: "string" },
+            },
+            required: ["reportInstructions"],
+          },
+        },
+        required: ["version", "node1", "node2", "node3"],
+      },
+      JobFull: {
+        allOf: [
+          { $ref: "#/components/schemas/JobPublic" },
+          {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              createdBy: { type: "string" },
+              pipeline: {
+                nullable: true,
+                allOf: [{ $ref: "#/components/schemas/JobPipeline" }],
+              },
+            },
+            required: ["description", "createdBy", "pipeline"],
+          },
+        ],
+      },
+      JobsBrowseSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              jobs: {
+                type: "array",
+                items: { $ref: "#/components/schemas/JobPublic" },
+              },
+            },
+            required: ["jobs"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobsListSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              jobs: {
+                type: "array",
+                items: { $ref: "#/components/schemas/JobFull" },
+              },
+            },
+            required: ["jobs"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobOneSuccessFull: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              job: { $ref: "#/components/schemas/JobFull" },
+            },
+            required: ["job"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobOneSuccessUnion: {
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              success: { type: "boolean", enum: [true] },
+              data: {
+                type: "object",
+                properties: {
+                  job: { $ref: "#/components/schemas/JobPublic" },
+                },
+                required: ["job"],
+              },
+            },
+            required: ["success", "data"],
+          },
+          {
+            $ref: "#/components/schemas/JobOneSuccessFull",
+          },
+        ],
+      },
+      JobCreateRequest: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["draft", "active", "paused", "closed"],
+          },
+          pipeline: { $ref: "#/components/schemas/JobPipeline" },
+        },
+        required: ["title"],
+      },
+      JobPatchRequest: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["draft", "active", "paused", "closed"],
+          },
+          pipeline: {
+            nullable: true,
+            allOf: [{ $ref: "#/components/schemas/JobPipeline" }],
+          },
+        },
+      },
+      ApplicationPublic: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          jobId: { type: "string" },
+          candidateId: { type: "string" },
+          organizationId: { type: "string" },
+          status: {
+            type: "string",
+            enum: [
+              "NODE_1_PENDING",
+              "NODE_2_PENDING",
+              "NODE_3_PENDING",
+              "COMPLETED",
+              "REJECTED",
+            ],
+          },
+          resumeUrl: { type: "string" },
+          currentFitScore: { type: "number", minimum: 0, maximum: 100 },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+        required: [
+          "id",
+          "jobId",
+          "candidateId",
+          "organizationId",
+          "status",
+          "resumeUrl",
+          "createdAt",
+          "updatedAt",
+        ],
+      },
+      ApplicationWithJobSummary: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          jobId: { type: "string" },
+          organizationId: { type: "string" },
+          status: { type: "string" },
+          resumeUrl: { type: "string" },
+          currentFitScore: { type: "number" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+          job: {
+            type: "object",
+            nullable: true,
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              status: { type: "string" },
+            },
+          },
+        },
+        required: [
+          "id",
+          "jobId",
+          "organizationId",
+          "status",
+          "resumeUrl",
+          "createdAt",
+          "updatedAt",
+          "job",
+        ],
+      },
+      ApplyRequest: {
+        type: "object",
+        properties: {
+          resumeUrl: {
+            type: "string",
+            format: "uri",
+            description: "https (or http) URL to the resume file.",
+          },
+        },
+        required: ["resumeUrl"],
+      },
+      ApplySuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              application: { $ref: "#/components/schemas/ApplicationPublic" },
+            },
+            required: ["application"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobApplicationsListSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              applications: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ApplicationPublic" },
+              },
+            },
+            required: ["applications"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      ApplicationsMeSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              applications: {
+                type: "array",
+                items: {
+                  $ref: "#/components/schemas/ApplicationWithJobSummary",
+                },
+              },
+            },
+            required: ["applications"],
+          },
+        },
+        required: ["success", "data"],
       },
       ErrorEnvelope: {
         type: "object",
