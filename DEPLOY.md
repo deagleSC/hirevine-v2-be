@@ -13,18 +13,18 @@ This service targets **[Vercel](https://vercel.com)** serverless (`api/index.js`
 
 Set these in **Vercel → Project → Settings → Environment Variables** (Production). See `.env.example` for full notes.
 
-| Variable | Required | Notes |
-|----------|----------|--------|
-| `NODE_ENV` | Yes | `production` |
-| `MONGODB_URI` | Yes | Connection string |
-| `JWT_SECRET` | Yes | Strong random secret |
-| `CORS_ORIGIN` | Recommended | Your frontend origin(s), comma-separated |
-| `BLOB_READ_WRITE_TOKEN` | Yes | Resume uploads |
-| `OPENROUTER_API_KEY` | Yes | For real AI (optional only if you accept stubs) |
-| `INNGEST_SIGNING_KEY` | Yes | Inngest Cloud invokes `/api/inngest` |
-| `INNGEST_EVENT_KEY` | Yes | API sends events (`apply`, quiz) |
-| `PORT` | No | Ignored on Vercel |
-| `RESUME_UPLOAD_MAX_BYTES` | No | Default `4194304` (4 MiB); increase only on hosts without Vercel’s body limit |
+| Variable                  | Required    | Notes                                                                         |
+| ------------------------- | ----------- | ----------------------------------------------------------------------------- |
+| `NODE_ENV`                | Yes         | `production`                                                                  |
+| `MONGODB_URI`             | Yes         | Connection string                                                             |
+| `JWT_SECRET`              | Yes         | Strong random secret                                                          |
+| `CORS_ORIGIN`             | Recommended | Your frontend origin(s), comma-separated                                      |
+| `BLOB_READ_WRITE_TOKEN`   | Yes         | Resume uploads                                                                |
+| `OPENROUTER_API_KEY`      | Recommended | Real AI; if missing, generate-pipeline returns 503 and Inngest uses stubs      |
+| `INNGEST_SIGNING_KEY`     | Yes         | Inngest Cloud invokes `/api/inngest`                                          |
+| `INNGEST_EVENT_KEY`       | Yes         | API sends events (`apply`, quiz)                                              |
+| `PORT`                    | No          | Ignored on Vercel                                                             |
+| `RESUME_UPLOAD_MAX_BYTES` | No          | Default `4194304` (4 MiB); increase only on hosts without Vercel’s body limit |
 
 Optional: `OPENROUTER_MODEL`, `BLOB_PUBLIC_HOST`, `OPENROUTER_HTTP_REFERER`, `OPENROUTER_APP_TITLE`, `JWT_EXPIRES_SEC`, `AUTH_COOKIE_*`.
 

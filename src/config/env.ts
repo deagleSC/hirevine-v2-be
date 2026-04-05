@@ -54,10 +54,6 @@ function getOpenRouterConfig(): {
   }
   const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
   const model = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
-  const nodeEnv = process.env.NODE_ENV ?? "development";
-  if (nodeEnv === "production" && !apiKey) {
-    throw new Error("OPENROUTER_API_KEY is required in production");
-  }
   return {
     baseURL,
     apiKey,
