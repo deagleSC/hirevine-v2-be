@@ -7,6 +7,7 @@ import express, {
 } from "express";
 import helmet, { type HelmetOptions } from "helmet";
 import { env } from "./config/env";
+import { connectDb } from "./db/connect";
 import { registerSwagger } from "./docs/registerSwagger";
 import { inngestServeHandler } from "./inngest/serve";
 import { ErrorCodes } from "./http/errorCodes";
@@ -45,6 +46,22 @@ const helmetForDocs: HelmetOptions = {
 export function createApp() {
   const app = express();
   app.set("trust proxy", 1);
+
+  let connectPromise: Promise<void> | null = null;
+  function ensureDb(): Promise<void> {
+    if (!connectPromise) {
+      connectPromise = connectDb().catch((err) => {
+        connectPromise = null;
+        return Promise.reject(err);
+      });
+    }
+    return connectPromise;
+  }
+  app.use((_req, _res, next) => {
+    void ensureDb()
+      .then(() => next())
+      .catch(next);
+  });
 
   app.use((req, res, next) => {
     const h = isSwaggerOrOpenApiPath(req) ? helmetForDocs : helmetForApi;

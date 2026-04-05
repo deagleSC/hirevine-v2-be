@@ -1,6 +1,6 @@
 # Deploying Hirevine API
 
-This service targets **[Vercel](https://vercel.com)** serverless (`api/index.js` + compiled `dist/`). You can also run **`npm run start`** on any Node 20+ host (Railway, Fly.io, a VM) if you point traffic at the long-running `server.ts` process instead.
+This service targets **[Vercel](https://vercel.com)** serverless: root **`index.js`** loads **`dist/vercelApp.js`** (one function for all routes; no `vercel.json` rewrites). See [Express on Vercel](https://vercel.com/docs/frameworks/backend/express). For a long-running process, use **`npm run start`** (`server.ts`) on Railway, Fly.io, a VM, etc.
 
 ## Prerequisites
 
