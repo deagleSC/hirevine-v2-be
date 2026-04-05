@@ -8,12 +8,14 @@ import express, {
 import helmet from "helmet";
 import { env } from "./config/env";
 import { registerSwagger } from "./docs/registerSwagger";
+import { inngestServeHandler } from "./inngest/serve";
 import { ErrorCodes } from "./http/errorCodes";
 import { fail, ok } from "./http/response";
 import { applicationsRouter } from "./routes/applications";
 import { authRouter } from "./routes/auth";
 import { jobsRouter } from "./routes/jobs";
 import { organizationsRouter } from "./routes/organizations";
+import { resumesRouter } from "./routes/resumes";
 
 export function createApp() {
   const app = express();
@@ -53,7 +55,9 @@ export function createApp() {
   app.use("/api/auth", authRouter);
   app.use("/api/organizations", organizationsRouter);
   app.use("/api/jobs", jobsRouter);
+  app.use("/api/resumes", resumesRouter);
   app.use("/api/applications", applicationsRouter);
+  app.use("/api/inngest", inngestServeHandler);
 
   registerSwagger(app);
 

@@ -13,6 +13,7 @@ export interface IApplicationRun extends Document {
   /** Denormalized from Job for recruiter queries without joining. */
   organizationId: Types.ObjectId;
   status: ApplicationStatus;
+  /** Public URL of the resume file (from Vercel Blob upload in production). */
   resumeUrl: string;
   currentFitScore?: number;
   createdAt: Date;
@@ -60,6 +61,8 @@ const applicationRunSchema = new Schema<IApplicationRun>(
 applicationRunSchema.index({ jobId: 1, candidateId: 1 }, { unique: true });
 applicationRunSchema.index({ candidateId: 1, createdAt: -1 });
 applicationRunSchema.index({ organizationId: 1, jobId: 1 });
+applicationRunSchema.index({ organizationId: 1, createdAt: -1 });
+applicationRunSchema.index({ organizationId: 1, status: 1, createdAt: -1 });
 
 export const ApplicationRun = mongoose.model<IApplicationRun>(
   "ApplicationRun",

@@ -1,5 +1,8 @@
 import { generateObject } from "ai";
-import { createChatModel } from "../ai/openrouter";
+import {
+  createChatModel,
+  openRouterStructuredOutputProviderOptions,
+} from "../ai/openrouter";
 import { jobPipelineSchema, type JobPipeline } from "../jobs/jobPipelineSchema";
 
 export async function generateJobPipelineFromDescription(params: {
@@ -10,6 +13,7 @@ export async function generateJobPipelineFromDescription(params: {
   const { object } = await generateObject({
     model,
     schema: jobPipelineSchema,
+    providerOptions: openRouterStructuredOutputProviderOptions,
     prompt: `You design a fixed 3-stage hiring evaluation pipeline for the job below.
 
 Stage 1 (node1): Resume screening — rubric explaining how to score resume fit against the role; mustHaveSkills and niceToHaveSkills as string arrays derived from the JD; optional passThreshold (0–100) for advancing past resume screen.

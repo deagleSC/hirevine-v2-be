@@ -32,9 +32,14 @@ export const openApiSpec: OpenAPIV3.Document = {
         "Job postings (org-scoped for writes). Public browse of active jobs; candidates apply across orgs.",
     },
     {
+      name: "Resumes",
+      description:
+        "Candidate resume file upload to Vercel Blob; use returned `resumeUrl` in `POST /api/jobs/{jobId}/apply`.",
+    },
+    {
       name: "Applications",
       description:
-        "Candidate application history (`/me`). Apply via `POST /api/jobs/{jobId}/apply`.",
+        "Candidates: **`GET /api/applications/me`**, quiz (`GET/POST /api/applications/{applicationId}/quiz`), detail (`GET /api/applications/{applicationId}`). Recruiters/admins: **`GET /api/applications`** — org-wide paginated list (`jobId`, `status`, `page`, `limit`); **`GET /api/jobs/{jobId}/applications`** — applications for one job; detail includes pipeline + node results. Apply using a Blob `resumeUrl` from `POST /api/resumes/upload`.",
     },
   ],
   paths: {
@@ -599,7 +604,7 @@ export const openApiSpec: OpenAPIV3.Document = {
         summary: "Apply to job",
         operationId: "jobsApply",
         description:
-          "Candidate only. Job must be `active`. One application per candidate per job.",
+          "Candidate only. Job must be `active`. One application per candidate per job. **`resumeUrl`** must be the HTTPS URL from **`POST /api/resumes/upload`** (Vercel Blob), unless the server runs in development with `ALLOW_ANY_RESUME_URL=true`.",
         security: [{}, { bearerAuth: [] }],
         parameters: [
           {
@@ -669,12 +674,83 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/resumes/upload": {
+      post: {
+        tags: ["Resumes"],
+        summary: "Upload resume file (Vercel Blob)",
+        operationId: "resumesUpload",
+        description:
+          "Candidate only. Multipart form field **`file`** (default max 4MB — Vercel-safe; set `RESUME_UPLOAD_MAX_BYTES` for self-hosted). Allowed: PDF or plain text. Requires `BLOB_READ_WRITE_TOKEN` on the server. Returns public `resumeUrl` for `POST /api/jobs/{jobId}/apply`.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                properties: {
+                  file: {
+                    type: "string",
+                    format: "binary",
+                    description: "Resume PDF or .txt",
+                  },
+                },
+                required: ["file"],
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ResumeUploadSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "503": {
+            description: "Blob token not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/jobs/{jobId}/applications": {
       get: {
         tags: ["Jobs"],
         summary: "List applications for a job",
         operationId: "jobsListApplications",
-        description: "Recruiter/admin for the job’s organization only.",
+        description:
+          "Recruiter/admin for the job’s organization only. For all jobs at once with pagination and filters, use **`GET /api/applications`**.",
         security: [{}, { bearerAuth: [] }],
         parameters: [
           {
@@ -722,6 +798,88 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/applications": {
+      get: {
+        tags: ["Applications"],
+        summary: "List applications in my organization",
+        operationId: "applicationsOrgList",
+        description:
+          "Recruiter/admin only. Paginated applications for your organization across all jobs. Optional **`jobId`** (must be an org job). Optional **`status`**: one value or comma-separated list (`NODE_1_PENDING`, `NODE_2_PENDING`, `NODE_3_PENDING`, `COMPLETED`, `REJECTED`). Each row includes **`candidateEmail`** and **`jobTitle`** for dashboard use.",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "page",
+            in: "query",
+            description: "1-based page index",
+            schema: { type: "integer", minimum: 1, default: 1 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            description: "Page size (max 100)",
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+          },
+          {
+            name: "jobId",
+            in: "query",
+            description:
+              "Filter to one job (Mongo id; must belong to your org)",
+            schema: { type: "string" },
+          },
+          {
+            name: "status",
+            in: "query",
+            description:
+              "Filter by run status; comma-separated for multiple (e.g. `COMPLETED` or `NODE_1_PENDING,NODE_2_PENDING`)",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ApplicationsOrgListSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid query (e.g. bad status or jobId)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (not recruiter/admin or no organization)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "jobId set but job not found in your organization",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/applications/me": {
       get: {
         tags: ["Applications"],
@@ -750,6 +908,209 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
           "403": {
             description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/applications/{applicationId}/quiz": {
+      get: {
+        tags: ["Applications"],
+        summary: "Get quiz questions for an application",
+        operationId: "applicationsQuizGet",
+        description:
+          "Candidate only. Returns pipeline node2 questions **without** answer keys when the run is `NODE_2_PENDING` and the job has a pipeline.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "applicationId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ApplicationQuizGetSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Validation or wrong application step",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Application not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ["Applications"],
+        summary: "Submit quiz answers",
+        operationId: "applicationsQuizPost",
+        description:
+          "Candidate only. Grades answers against the job pipeline (deterministic: exact match for multiple choice; case-insensitive trim for short answer). Creates node 2 `NodeResult`, sets `NODE_3_PENDING`, emits `hirevine/application.quiz_submitted` for the Node 3 worker.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "applicationId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/ApplicationQuizSubmitRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description:
+              "OK — application now `NODE_3_PENDING` until final report completes",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ApplicationQuizSubmitSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Validation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Application not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "409": {
+            description: "Quiz already submitted",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/applications/{applicationId}": {
+      get: {
+        tags: ["Applications"],
+        summary: "Application detail (candidate or recruiter)",
+        operationId: "applicationsDetail",
+        description:
+          "**Candidate:** own application only — job summary (no pipeline), `nextStep` guidance, all `NodeResult` rows for this run. **Recruiter/admin:** same `organizationId` as the application — full job including pipeline (with quiz answer keys), candidate `id` + `email`, node results.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "applicationId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK — inspect `data.view` (`candidate` | `recruiter`)",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ApplicationDetailSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid id",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Not found or no access",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorEnvelope" },
@@ -1177,13 +1538,34 @@ export const openApiSpec: OpenAPIV3.Document = {
           "job",
         ],
       },
+      ResumeUploadSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              resumeUrl: {
+                type: "string",
+                format: "uri",
+                description: "Public URL — pass to apply",
+              },
+              pathname: { type: "string" },
+              contentType: { type: "string" },
+            },
+            required: ["resumeUrl", "pathname", "contentType"],
+          },
+        },
+        required: ["success", "data"],
+      },
       ApplyRequest: {
         type: "object",
         properties: {
           resumeUrl: {
             type: "string",
             format: "uri",
-            description: "https (or http) URL to the resume file.",
+            description:
+              "HTTPS URL returned from `POST /api/resumes/upload` (`*.public.blob.vercel-storage.com` or `BLOB_PUBLIC_HOST`).",
           },
         },
         required: ["resumeUrl"],
@@ -1219,6 +1601,62 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
         required: ["success", "data"],
       },
+      ApplicationQuizGetSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              quiz: {
+                type: "object",
+                properties: {
+                  questions: {
+                    type: "array",
+                    description:
+                      "Public quiz items (no answerKey). Same discriminated shape as JobPipeline node2.",
+                    items: { type: "object", additionalProperties: true },
+                  },
+                },
+                required: ["questions"],
+              },
+            },
+            required: ["quiz"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      ApplicationQuizSubmitRequest: {
+        type: "object",
+        properties: {
+          answers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                questionId: { type: "string" },
+                answer: { type: "string" },
+              },
+              required: ["questionId", "answer"],
+            },
+          },
+        },
+        required: ["answers"],
+      },
+      ApplicationQuizSubmitSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              application: { $ref: "#/components/schemas/ApplicationPublic" },
+            },
+            required: ["application"],
+          },
+        },
+        required: ["success", "data"],
+      },
       ApplicationsMeSuccess: {
         type: "object",
         properties: {
@@ -1234,6 +1672,102 @@ export const openApiSpec: OpenAPIV3.Document = {
               },
             },
             required: ["applications"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      ApplicationOrgListRow: {
+        allOf: [
+          { $ref: "#/components/schemas/ApplicationPublic" },
+          {
+            type: "object",
+            properties: {
+              candidateEmail: {
+                type: "string",
+                description:
+                  "Candidate account email (or placeholder if the user row is missing)",
+              },
+              jobTitle: {
+                type: "string",
+                description: "Job title at time of list",
+              },
+            },
+            required: ["candidateEmail", "jobTitle"],
+          },
+        ],
+      },
+      ApplicationsOrgListSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              applications: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ApplicationOrgListRow" },
+              },
+              page: { type: "integer", minimum: 1 },
+              limit: { type: "integer", minimum: 1, maximum: 100 },
+              total: {
+                type: "integer",
+                minimum: 0,
+                description: "Total matching rows (all pages)",
+              },
+              totalPages: {
+                type: "integer",
+                minimum: 0,
+                description: "Ceil(total / limit); 0 when total is 0",
+              },
+            },
+            required: ["applications", "page", "limit", "total", "totalPages"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      ApplicationDetailSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              view: {
+                type: "string",
+                enum: ["candidate", "recruiter"],
+              },
+              application: {
+                type: "object",
+                description: "Same shape as ApplicationPublic",
+                additionalProperties: true,
+              },
+              job: {
+                type: "object",
+                description:
+                  "Candidate: title + status + organizationId. Recruiter: full job including pipeline.",
+                additionalProperties: true,
+              },
+              nextStep: {
+                type: "string",
+                description:
+                  "Candidate view only — human-readable pipeline hint",
+              },
+              candidate: {
+                type: "object",
+                description: "Recruiter view only",
+                properties: {
+                  id: { type: "string" },
+                  email: { type: "string", format: "email" },
+                },
+              },
+              nodes: {
+                type: "array",
+                description:
+                  "NodeResult documents (resume, quiz, final report), sorted by nodeIndex",
+                items: { type: "object", additionalProperties: true },
+              },
+            },
+            required: ["view", "application", "job", "nodes"],
           },
         },
         required: ["success", "data"],

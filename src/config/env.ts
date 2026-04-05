@@ -66,8 +66,22 @@ function getOpenRouterConfig(): {
   };
 }
 
+function getBlobConfig(): {
+  readWriteToken: string;
+  publicHost: string | null;
+} {
+  const readWriteToken = process.env.BLOB_READ_WRITE_TOKEN?.trim() ?? "";
+  const rawHost = process.env.BLOB_PUBLIC_HOST?.trim().toLowerCase();
+  const publicHost = rawHost
+    ? rawHost.replace(/^https?:\/\//, "").split("/")[0]!
+    : null;
+  return { readWriteToken, publicHost };
+}
+
+const nodeEnvResolved = process.env.NODE_ENV ?? "development";
+
 export const env = {
-  nodeEnv: process.env.NODE_ENV ?? "development",
+  nodeEnv: nodeEnvResolved,
   port: Number(process.env.PORT) || 8000,
   mongodbUri: process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017/hirevine",
   corsOrigin: parseCorsOrigins(),
@@ -75,4 +89,9 @@ export const env = {
   jwtExpiresInSec: sessionSeconds,
   authCookieName: process.env.AUTH_COOKIE_NAME?.trim() || "hirevine_session",
   openRouter: getOpenRouterConfig(),
+  blob: getBlobConfig(),
+  /** Non-production only: allow any https URL on apply (e.g. E2E scripts). */
+  allowAnyResumeUrl:
+    nodeEnvResolved !== "production" &&
+    process.env.ALLOW_ANY_RESUME_URL === "true",
 } as const;

@@ -6,6 +6,9 @@ import type { IJob } from "../models/Job";
 import { Job, type JobStatus } from "../models/Job";
 import { ApplicationRun } from "../models/ApplicationRun";
 import { User } from "../models/User";
+import { HIREVINE_EVENTS } from "../inngest/events";
+import { inngest } from "../inngest/client";
+import { isResumeStorageUrl } from "../resume/isResumeStorageUrl";
 import { generateJobPipelineFromDescription } from "../services/generateJobPipeline";
 import { ErrorCodes } from "../http/errorCodes";
 import { fail, ok } from "../http/response";
@@ -242,7 +245,17 @@ jobsRouter.post(
         res,
         400,
         ErrorCodes.VALIDATION_ERROR,
-        "Valid resumeUrl (http or https) is required",
+        "Valid resumeUrl (https) is required",
+      );
+      return;
+    }
+
+    if (!isResumeStorageUrl(resumeUrl) && !env.allowAnyResumeUrl) {
+      fail(
+        res,
+        400,
+        ErrorCodes.VALIDATION_ERROR,
+        "resumeUrl must be the URL returned from POST /api/resumes/upload (Vercel Blob public URL).",
       );
       return;
     }
@@ -270,6 +283,17 @@ jobsRouter.post(
         status: "NODE_1_PENDING",
         resumeUrl,
       });
+      void inngest
+        .send({
+          name: HIREVINE_EVENTS.applicationCreated,
+          data: { applicationRunId: run._id.toString() },
+        })
+        .catch((e) => {
+          console.error(
+            "[inngest] send hirevine/application.created failed",
+            e,
+          );
+        });
       ok(res, 201, { application: toPublicApplicationRun(run) });
     } catch (err: unknown) {
       if (isMongoDuplicateKey(err)) {
