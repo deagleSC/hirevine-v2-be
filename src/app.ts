@@ -5,7 +5,7 @@ import express, {
   type Request,
   type Response,
 } from "express";
-import helmet from "helmet";
+import helmet, { type HelmetOptions } from "helmet";
 import { env } from "./config/env";
 import { registerSwagger } from "./docs/registerSwagger";
 import { inngestServeHandler } from "./inngest/serve";
@@ -17,24 +17,39 @@ import { jobsRouter } from "./routes/jobs";
 import { organizationsRouter } from "./routes/organizations";
 import { resumesRouter } from "./routes/resumes";
 
+function isSwaggerOrOpenApiPath(req: Request): boolean {
+  return req.path === "/openapi.json" || req.path.startsWith("/api-docs");
+}
+
+const helmetForApi: HelmetOptions = {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      imgSrc: ["'self'", "data:", "https://validator.swagger.io"],
+      connectSrc: ["'self'"],
+      workerSrc: ["'self'", "blob:"],
+      fontSrc: ["'self'", "data:"],
+    },
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+};
+
+/** Swagger UI needs inline scripts, blob workers, and fonts — strict CSP yields a blank /api-docs. */
+const helmetForDocs: HelmetOptions = {
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+};
+
 export function createApp() {
   const app = express();
   app.set("trust proxy", 1);
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-          imgSrc: ["'self'", "data:", "https://validator.swagger.io"],
-          connectSrc: ["'self'"],
-        },
-      },
-      crossOriginResourcePolicy: { policy: "cross-origin" },
-    }),
-  );
+  app.use((req, res, next) => {
+    const h = isSwaggerOrOpenApiPath(req) ? helmetForDocs : helmetForApi;
+    helmet(h)(req, res, next);
+  });
   app.use(
     cors({
       origin: env.corsOrigin,
@@ -46,6 +61,20 @@ export function createApp() {
 
   app.get("/health", (_req, res) => {
     ok(res, 200, { service: "hirevine-v2-be" });
+  });
+
+  /** Root URL (e.g. Vercel `/` after rewrite); avoids empty 404 and documents entrypoints. */
+  app.get("/", (_req, res) => {
+    ok(res, 200, {
+      service: "hirevine-v2-be",
+      message: "API is running",
+      links: {
+        api: "/api",
+        health: "/health",
+        docs: "/api-docs",
+        openapi: "/openapi.json",
+      },
+    });
   });
 
   app.get("/api", (_req, res) => {

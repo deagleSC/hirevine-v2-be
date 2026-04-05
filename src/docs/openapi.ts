@@ -43,6 +43,25 @@ export const openApiSpec: OpenAPIV3.Document = {
     },
   ],
   paths: {
+    "/": {
+      get: {
+        tags: ["System"],
+        summary: "Root — API landing",
+        operationId: "getRoot",
+        description:
+          "Returns service id and links to `/api`, `/health`, `/api-docs`, `/openapi.json`. On Vercel, `vercel.json` rewrites `/` to the serverless handler.",
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/RootSuccess" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/health": {
       get: {
         tags: ["System"],
@@ -1140,6 +1159,31 @@ export const openApiSpec: OpenAPIV3.Document = {
             type: "object",
             properties: { service: { type: "string" } },
             required: ["service"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      RootSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              service: { type: "string" },
+              message: { type: "string" },
+              links: {
+                type: "object",
+                properties: {
+                  api: { type: "string" },
+                  health: { type: "string" },
+                  docs: { type: "string" },
+                  openapi: { type: "string" },
+                },
+                required: ["api", "health", "docs", "openapi"],
+              },
+            },
+            required: ["service", "message", "links"],
           },
         },
         required: ["success", "data"],
