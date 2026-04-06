@@ -1,6 +1,6 @@
 # Deploying Hirevine API
 
-This service targets **[Vercel](https://vercel.com)** serverless (`api/index.js` + compiled `dist/`). You can also run **`npm run start`** on any Node 20+ host (Railway, Fly.io, a VM) if you point traffic at the long-running `server.ts` process instead.
+This service targets **[Vercel](https://vercel.com)** using [native Express](https://vercel.com/docs/frameworks/backend/express) (`src/server.ts` is the backend entry; Vercel bundles it—no `api/` shim or catch-all rewrites). You can also run **`npm run start`** on any Node 20+ host (Railway, Fly.io, a VM) if you point traffic at the long-running process built from `server.ts`.
 
 ## Prerequisites
 
@@ -35,7 +35,7 @@ Do **not** set `ALLOW_ANY_RESUME_URL` in production.
 1. Push this repo to GitHub/GitLab/Bitbucket.
 2. **Vercel → Add New Project** → import the repo.
 3. **Root directory**: repository root (`hirevine-v2-be` if the repo is monorepo-only for this app).
-4. **Framework Preset**: Other. **Build Command**: `npm run build` (already in `vercel.json`). **Output**: leave default (no static export).
+4. **Framework Preset**: Other (or let Vercel detect the Express backend). **Build Command**: leave empty unless you want an explicit `npm run build` (TypeScript check / `dist/` for non-Vercel hosts only). **Output**: leave default (no static export).
 5. Add environment variables (table above).
 6. Deploy.
 
@@ -86,6 +86,7 @@ Set `RESUME_UPLOAD_MAX_BYTES=5242880` if you want a 5 MiB cap and your host allo
 
 ## Troubleshooting
 
+- **Build warns about `functions` / unknown path** — If `vercel.json`’s `src/server.ts` key does not match what the build expects, remove the `functions` block and set **max duration** (and memory, if needed) under **Project → Settings → Functions**. With [Fluid compute](https://vercel.com/docs/fluid-compute), memory is often configured in the dashboard rather than in `vercel.json`.
 - **503 Database unavailable** — Wrong `MONGODB_URI`, IP allowlist, or Atlas paused tier.
 - **401/403 after login** — `JWT_SECRET` changed between deploys (sessions invalidated) or cookie `Secure`/domain mismatch.
 - **413 on resume upload** — File or multipart body over host limit; use smaller PDF or raise `RESUME_UPLOAD_MAX_BYTES` only where the platform allows.

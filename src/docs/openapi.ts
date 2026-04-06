@@ -49,7 +49,7 @@ export const openApiSpec: OpenAPIV3.Document = {
         summary: "Root — API landing",
         operationId: "getRoot",
         description:
-          "Returns service id and links to `/api`, `/health`, `/api-docs`, `/openapi.json`. On Vercel, `vercel.json` rewrites `/` to the serverless handler.",
+          "Returns service id and links to `/api`, `/health`, `/api-docs`, `/openapi.json`. On Vercel, the Express app is deployed as a single backend (native Express routing).",
         responses: {
           "200": {
             description: "OK",
