@@ -1,6 +1,6 @@
 # Deploying Hirevine API
 
-This service targets **[Vercel](https://vercel.com)** using [native Express](https://vercel.com/docs/frameworks/backend/express) (`src/server.ts` is the backend entry; Vercel bundles it—no `api/` shim or catch-all rewrites). You can also run **`npm run start`** on any Node 20+ host (Railway, Fly.io, a VM) if you point traffic at the long-running process built from `server.ts`.
+This service targets **[Vercel](https://vercel.com)** using [native Express](https://vercel.com/docs/frameworks/backend/express) (`src/server.ts` is the backend entry; Vercel bundles it—no `api/` shim or catch-all rewrites). The Express app factory lives in **`src/httpApp.ts`** (not `src/app.ts`, because Vercel treats `src/app.{ts,js,…}` as a framework entry and requires a default export there). You can also run **`npm run start`** on any Node 20+ host (Railway, Fly.io, a VM) if you point traffic at the long-running process built from `server.ts`.
 
 ## Prerequisites
 

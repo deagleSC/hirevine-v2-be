@@ -1,5 +1,5 @@
 import express from "express";
-import { createApp } from "./app";
+import { createApp } from "./httpApp";
 import { env } from "./config/env";
 import { ensureDb } from "./db/connect";
 import "./models";

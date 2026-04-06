@@ -1,3 +1,7 @@
+/**
+ * Express routes and middleware. Not named `app.ts` — Vercel reserves `src/app.{ts}` as a
+ * native Express entry and expects a default export there.
+ */
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, {
@@ -63,7 +67,7 @@ export function createApp() {
     ok(res, 200, { service: "hirevine-v2-be" });
   });
 
-  /** Root URL (e.g. Vercel `/` after rewrite); avoids empty 404 and documents entrypoints. */
+  /** Root URL on Vercel `/`; avoids empty 404 and documents entrypoints. */
   app.get("/", (_req, res) => {
     ok(res, 200, {
       service: "hirevine-v2-be",
