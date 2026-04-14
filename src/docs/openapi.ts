@@ -29,7 +29,7 @@ export const openApiSpec: OpenAPIV3.Document = {
     {
       name: "Jobs",
       description:
-        "Job postings (org-scoped for writes). Public browse of active jobs; candidates apply across orgs.",
+        "Job postings (org-scoped for writes). Public browse of active jobs; candidates apply across orgs. Recruiters list org jobs with **`GET /api/jobs`** (`page`, `limit`, optional `status` / `q`) and use **`GET /api/jobs/options`** for lightweight id/title lists (e.g. application filters).",
     },
     {
       name: "Resumes",
@@ -39,7 +39,7 @@ export const openApiSpec: OpenAPIV3.Document = {
     {
       name: "Applications",
       description:
-        "Candidates: **`GET /api/applications/me`**, quiz (`GET/POST /api/applications/{applicationId}/quiz`), detail (`GET /api/applications/{applicationId}`). Recruiters/admins: **`GET /api/applications`** — org-wide paginated list (`jobId`, `status`, `page`, `limit`); **`GET /api/jobs/{jobId}/applications`** — applications for one job; detail includes pipeline + node results. Apply using a Blob `resumeUrl` from `POST /api/resumes/upload`.",
+        "Candidates: **`GET /api/applications/me`**, quiz (`GET/POST /api/applications/{applicationId}/quiz`), detail (`GET /api/applications/{applicationId}` — status, job summary, `nextStep` only; no node scores). Recruiters/admins: **`GET /api/applications`** — org-wide paginated list (`jobId`, `status`, `page`, `limit`); **`GET /api/jobs/{jobId}/applications`** — applications for one job; detail includes pipeline + node results. Apply using a Blob `resumeUrl` from `POST /api/resumes/upload`.",
     },
   ],
   paths: {
@@ -330,7 +330,8 @@ export const openApiSpec: OpenAPIV3.Document = {
         tags: ["Jobs"],
         summary: "Browse active jobs",
         operationId: "jobsBrowse",
-        description: "Public. Returns up to 50 active jobs (minimal fields).",
+        description:
+          "Public. Returns up to 50 active jobs (title, status, organization, full description, timestamps).",
         responses: {
           "200": {
             description: "OK",
@@ -346,15 +347,50 @@ export const openApiSpec: OpenAPIV3.Document = {
     "/api/jobs": {
       get: {
         tags: ["Jobs"],
-        summary: "List jobs in my organization",
+        summary: "List jobs in my organization (paginated)",
+        description:
+          "Recruiter/admin. Supports `page`, `limit` (max 100), optional `status` (one job status or comma-separated list), and optional `q` (case-insensitive title substring, max 120 chars). Sorted by `updatedAt` descending.",
         operationId: "jobsList",
         security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "page",
+            in: "query",
+            schema: { type: "integer", minimum: 1, default: 1 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+          },
+          {
+            name: "status",
+            in: "query",
+            description:
+              "Filter by posting status: single value or comma-separated (e.g. `draft,active`).",
+            schema: { type: "string" },
+          },
+          {
+            name: "q",
+            in: "query",
+            description: "Search job title (case-insensitive substring).",
+            schema: { type: "string", maxLength: 120 },
+          },
+        ],
         responses: {
           "200": {
             description: "OK",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/JobsListSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid query (e.g. status)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
               },
             },
           },
@@ -425,13 +461,49 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/jobs/options": {
+      get: {
+        tags: ["Jobs"],
+        summary: "List job id and title for filters",
+        description:
+          "Recruiter/admin. Returns up to 500 jobs in the organization (`id`, `title` only), newest `updatedAt` first. For application filters and similar; use `GET /api/jobs` for full rows and pagination.",
+        operationId: "jobsListOptions",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobsOptionsSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "No organization or wrong role",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/jobs/{jobId}": {
       get: {
         tags: ["Jobs"],
         summary: "Get job by id",
         operationId: "jobsGetById",
         description:
-          "Active jobs: public summary. Draft/paused/closed: recruiter/admin of owning org only.",
+          "Active jobs: public fields including full job description (no pipeline). Draft/paused/closed: recruiter/admin of owning org only.",
         parameters: [
           {
             name: "jobId",
@@ -600,6 +672,88 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
           "502": {
             description: "Upstream model / parse failure",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "503": {
+            description: "OPENROUTER_API_KEY not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/{jobId}/pipeline-chat": {
+      post: {
+        tags: ["Jobs"],
+        summary: "Streaming assistant to edit hiring pipeline",
+        operationId: "jobsPipelineChat",
+        description:
+          'Recruiter/admin, org-scoped job. Requires an existing `pipeline`. Body: `{ "messages": [...] }` using Vercel AI SDK UI messages. Response is a streamed UI message sequence (same protocol as `useChat` / `DefaultChatTransport`). The model may call tool **`apply_pipeline_patch`** to merge JSON into `node1`, `node2`, or `node3` (fixed stages only; full quiz `questions` array when changing questions).',
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "jobId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["messages"],
+                properties: {
+                  messages: {
+                    type: "array",
+                    description: "AI SDK UI messages (see Vercel AI SDK docs)",
+                    items: { type: "object" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description:
+              "UI message stream (Vercel AI SDK). Client should use `DefaultChatTransport` or equivalent.",
+          },
+          "400": {
+            description: "Missing pipeline, invalid body, or invalid messages",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Job not found",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorEnvelope" },
@@ -1083,7 +1237,7 @@ export const openApiSpec: OpenAPIV3.Document = {
         summary: "Application detail (candidate or recruiter)",
         operationId: "applicationsDetail",
         description:
-          "**Candidate:** own application only — job summary (no pipeline), `nextStep` guidance, all `NodeResult` rows for this run. **Recruiter/admin:** same `organizationId` as the application — full job including pipeline (with quiz answer keys), candidate `id` + `email`, node results.",
+          "**Candidate:** own application only — job summary (no pipeline), `nextStep` guidance (no per-node scores or reasoning). **Recruiter/admin:** same `organizationId` as the application — full job including pipeline (with quiz answer keys), candidate `id` + `email`, `nodes` (NodeResult rows).",
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1354,6 +1508,10 @@ export const openApiSpec: OpenAPIV3.Document = {
             enum: ["draft", "active", "paused", "closed"],
           },
           organizationId: { type: "string" },
+          description: {
+            type: "string",
+            description: "Full posting text for candidates on active listings.",
+          },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
         },
@@ -1447,6 +1605,34 @@ export const openApiSpec: OpenAPIV3.Document = {
               jobs: {
                 type: "array",
                 items: { $ref: "#/components/schemas/JobFull" },
+              },
+              page: { type: "integer", minimum: 1 },
+              limit: { type: "integer", minimum: 1 },
+              total: { type: "integer", minimum: 0 },
+              totalPages: { type: "integer", minimum: 0 },
+            },
+            required: ["jobs", "page", "limit", "total", "totalPages"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobsOptionsSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              jobs: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    title: { type: "string" },
+                  },
+                  required: ["id", "title"],
+                },
               },
             },
             required: ["jobs"],
@@ -1807,11 +1993,11 @@ export const openApiSpec: OpenAPIV3.Document = {
               nodes: {
                 type: "array",
                 description:
-                  "NodeResult documents (resume, quiz, final report), sorted by nodeIndex",
+                  "Recruiter/admin only — NodeResult documents (resume, quiz, final report), sorted by nodeIndex",
                 items: { type: "object", additionalProperties: true },
               },
             },
-            required: ["view", "application", "job", "nodes"],
+            required: ["view", "application", "job"],
           },
         },
         required: ["success", "data"],

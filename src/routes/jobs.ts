@@ -1,4 +1,11 @@
 import { Router } from "express";
+import {
+  convertToModelMessages,
+  streamText,
+  stepCountIs,
+  type UIMessage,
+} from "ai";
+import { createChatModel } from "../ai/openrouter";
 import { env } from "../config/env";
 import { parseJobPipeline } from "../jobs/jobPipelineSchema";
 import type { IApplicationRun } from "../models/ApplicationRun";
@@ -10,6 +17,10 @@ import { HIREVINE_EVENTS } from "../inngest/events";
 import { inngest } from "../inngest/client";
 import { isResumeStorageUrl } from "../resume/isResumeStorageUrl";
 import { generateJobPipelineFromDescription } from "../services/generateJobPipeline";
+import {
+  buildPipelineChatSystemPrompt,
+  createApplyPipelinePatchTool,
+} from "../services/jobPipelineChatTools";
 import { ErrorCodes } from "../http/errorCodes";
 import { fail, ok } from "../http/response";
 import { requireAuth } from "../middleware/auth";
@@ -20,6 +31,9 @@ import { asyncHandler } from "../util/asyncHandler";
 
 const BROWSE_LIMIT = 50;
 const JOB_STATUSES: JobStatus[] = ["draft", "active", "paused", "closed"];
+const ORG_JOBS_MAX_LIMIT = 100;
+const ORG_JOBS_DEFAULT_LIMIT = 20;
+const ORG_JOBS_OPTIONS_MAX = 500;
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -37,6 +51,35 @@ function parseJobStatus(value: unknown): JobStatus | undefined {
     : undefined;
 }
 
+function parsePositiveInt(
+  raw: unknown,
+  fallback: number,
+  max?: number,
+): number {
+  const n = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  if (max !== undefined && n > max) return max;
+  return n;
+}
+
+/** Comma-separated job statuses, or empty / omitted for no status filter. */
+function parseJobStatusesFilter(raw: unknown): JobStatus[] | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw !== "string") return null;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!parts.length) return null;
+  const invalid = parts.filter((p) => !JOB_STATUSES.includes(p as JobStatus));
+  if (invalid.length) return [];
+  return [...new Set(parts)] as JobStatus[];
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function toPublicJob(job: IJob, visibility: "public" | "full") {
   const base = {
     id: job.id,
@@ -47,7 +90,10 @@ function toPublicJob(job: IJob, visibility: "public" | "full") {
     updatedAt: job.updatedAt,
   };
   if (visibility === "public") {
-    return base;
+    return {
+      ...base,
+      description: job.description,
+    };
   }
   return {
     ...base,
@@ -140,16 +186,77 @@ jobsRouter.post(
 );
 
 jobsRouter.get(
-  "/",
+  "/options",
   requireAuth,
   requireRoles("recruiter", "admin"),
   requireRecruiterOrganization,
   asyncHandler(async (req, res) => {
     const jobs = await Job.find({ organizationId: req.orgId })
-      .sort({ createdAt: -1 })
+      .select({ _id: 1, title: 1 })
+      .sort({ updatedAt: -1 })
+      .limit(ORG_JOBS_OPTIONS_MAX)
+      .lean()
       .exec();
     ok(res, 200, {
-      jobs: jobs.map((j) => toPublicJob(j, "full")),
+      jobs: jobs.map((j) => ({
+        id: String(j._id),
+        title: j.title as string,
+      })),
+    });
+  }),
+);
+
+jobsRouter.get(
+  "/",
+  requireAuth,
+  requireRoles("recruiter", "admin"),
+  requireRecruiterOrganization,
+  asyncHandler(async (req, res) => {
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = parsePositiveInt(
+      req.query.limit,
+      ORG_JOBS_DEFAULT_LIMIT,
+      ORG_JOBS_MAX_LIMIT,
+    );
+    const skip = (page - 1) * limit;
+
+    const statusFilter = parseJobStatusesFilter(req.query.status);
+    if (statusFilter !== null && statusFilter.length === 0) {
+      fail(
+        res,
+        400,
+        ErrorCodes.VALIDATION_ERROR,
+        `Invalid status. Use one or more of: ${JOB_STATUSES.join(", ")}`,
+      );
+      return;
+    }
+
+    const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const q = qRaw.length > 120 ? qRaw.slice(0, 120) : qRaw;
+
+    const filter: Record<string, unknown> = { organizationId: req.orgId };
+    if (statusFilter?.length === 1) {
+      filter.status = statusFilter[0];
+    } else if (statusFilter && statusFilter.length > 1) {
+      filter.status = { $in: statusFilter };
+    }
+    if (q) {
+      filter.title = { $regex: escapeRegex(q), $options: "i" };
+    }
+
+    const [total, docs] = await Promise.all([
+      Job.countDocuments(filter).exec(),
+      Job.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).exec(),
+    ]);
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+    ok(res, 200, {
+      jobs: docs.map((j) => toPublicJob(j, "full")),
+      page,
+      limit,
+      total,
+      totalPages,
     });
   }),
 );
@@ -207,6 +314,87 @@ jobsRouter.post(
         "Pipeline generation failed; try again or set pipeline manually",
       );
     }
+  }),
+);
+
+jobsRouter.post(
+  "/:jobId/pipeline-chat",
+  requireAuth,
+  requireRoles("recruiter", "admin"),
+  requireRecruiterOrganization,
+  asyncHandler(async (req, res) => {
+    if (!env.openRouter.apiKey) {
+      fail(
+        res,
+        503,
+        ErrorCodes.SERVICE_UNAVAILABLE,
+        "OPENROUTER_API_KEY is not configured",
+      );
+      return;
+    }
+
+    const job = await Job.findOne({
+      _id: req.params.jobId,
+      organizationId: req.orgId,
+    }).exec();
+    if (!job) {
+      fail(res, 404, ErrorCodes.NOT_FOUND, "Job not found");
+      return;
+    }
+    if (!job.pipeline) {
+      fail(
+        res,
+        400,
+        ErrorCodes.VALIDATION_ERROR,
+        "Job has no pipeline yet. Generate a pipeline before using the assistant.",
+      );
+      return;
+    }
+
+    const body = req.body as { messages?: unknown };
+    if (!body.messages || !Array.isArray(body.messages)) {
+      fail(
+        res,
+        400,
+        ErrorCodes.VALIDATION_ERROR,
+        "Expected JSON body with messages array",
+      );
+      return;
+    }
+
+    const jobIdParam = req.params.jobId;
+    const jobIdForTool =
+      typeof jobIdParam === "string" ? jobIdParam : (jobIdParam?.[0] ?? "");
+    const apply_pipeline_patch = createApplyPipelinePatchTool({
+      jobId: jobIdForTool,
+      organizationId: req.orgId!,
+    });
+    const tools = { apply_pipeline_patch };
+
+    let modelMessages;
+    try {
+      modelMessages = await convertToModelMessages(
+        body.messages as UIMessage[],
+        { tools },
+      );
+    } catch (e) {
+      console.error(e);
+      fail(res, 400, ErrorCodes.VALIDATION_ERROR, "Invalid chat messages");
+      return;
+    }
+
+    const system = buildPipelineChatSystemPrompt(job.title, job.pipeline);
+
+    const result = streamText({
+      model: createChatModel(),
+      system,
+      messages: modelMessages,
+      tools,
+      stopWhen: stepCountIs(14),
+      maxOutputTokens: 8192,
+    });
+
+    result.pipeUIMessageStreamToResponse(res);
   }),
 );
 

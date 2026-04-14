@@ -434,10 +434,6 @@ applicationsRouter.get(
       return;
     }
 
-    const nodes = await NodeResult.find({ applicationRunId: run._id })
-      .sort({ nodeIndex: 1 })
-      .exec();
-
     const role = req.auth!.role;
     const userId = req.auth!.userId;
 
@@ -451,12 +447,15 @@ applicationsRouter.get(
         application: toPublicApplicationRun(run),
         job: toCandidateJobSummary(job),
         nextStep: candidateNextStep(run.status),
-        nodes: nodes.map(toNodeDetail),
       });
       return;
     }
 
     if (role === "recruiter" || role === "admin") {
+      const nodes = await NodeResult.find({ applicationRunId: run._id })
+        .sort({ nodeIndex: 1 })
+        .exec();
+
       const user = await User.findById(userId).exec();
       if (
         !user?.organizationId ||
