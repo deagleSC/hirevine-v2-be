@@ -16,6 +16,10 @@ import { NodeResult } from "../models/NodeResult";
 import { User } from "../models/User";
 import { toPublicQuizQuestions } from "../quiz/quizPublic";
 import { gradeQuizSubmission } from "../services/gradeQuiz";
+import {
+  getCandidateAnalytics,
+  getRecruiterOrgAnalytics,
+} from "../services/dashboardAnalytics";
 import { requireAuth } from "../middleware/auth";
 import { requireRecruiterOrganization } from "../middleware/recruiterOrg";
 import { requireRoles } from "../middleware/roles";
@@ -182,6 +186,27 @@ applicationsRouter.get(
         toPublicApplicationWithJob(r, jobById.get(r.jobId.toString()) ?? null),
       ),
     });
+  }),
+);
+
+applicationsRouter.get(
+  "/analytics/org",
+  requireAuth,
+  requireRoles("recruiter", "admin"),
+  requireRecruiterOrganization,
+  asyncHandler(async (req, res) => {
+    const data = await getRecruiterOrgAnalytics(req.orgId!);
+    ok(res, 200, data);
+  }),
+);
+
+applicationsRouter.get(
+  "/analytics/me",
+  requireAuth,
+  requireRoles("candidate"),
+  asyncHandler(async (req, res) => {
+    const data = await getCandidateAnalytics(req.auth!.userId);
+    ok(res, 200, data);
   }),
 );
 

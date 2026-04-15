@@ -29,7 +29,8 @@ import { requireRecruiterOrganization } from "../middleware/recruiterOrg";
 import { requireRoles } from "../middleware/roles";
 import { asyncHandler } from "../util/asyncHandler";
 
-const BROWSE_LIMIT = 50;
+/** Max chars for org job list `q` (trimmed, then truncated). */
+const JOB_Q_MAX_LEN = 120;
 const JOB_STATUSES: JobStatus[] = ["draft", "active", "paused", "closed"];
 const ORG_JOBS_MAX_LIMIT = 100;
 const ORG_JOBS_DEFAULT_LIMIT = 20;
@@ -128,19 +129,6 @@ function isMongoDuplicateKey(err: unknown): boolean {
 
 export const jobsRouter = Router();
 
-jobsRouter.get(
-  "/browse",
-  asyncHandler(async (_req, res) => {
-    const jobs = await Job.find({ status: "active" })
-      .sort({ createdAt: -1 })
-      .limit(BROWSE_LIMIT)
-      .exec();
-    ok(res, 200, {
-      jobs: jobs.map((j) => toPublicJob(j, "public")),
-    });
-  }),
-);
-
 jobsRouter.post(
   "/",
   requireAuth,
@@ -206,6 +194,47 @@ jobsRouter.get(
   }),
 );
 
+/**
+ * Active postings across all organizations (public fields only).
+ * Registered before `GET /:jobId` so `catalog` is not treated as an id.
+ */
+jobsRouter.get(
+  "/catalog",
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = parsePositiveInt(
+      req.query.limit,
+      ORG_JOBS_DEFAULT_LIMIT,
+      ORG_JOBS_MAX_LIMIT,
+    );
+    const skip = (page - 1) * limit;
+
+    const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const q = qRaw.length > JOB_Q_MAX_LEN ? qRaw.slice(0, JOB_Q_MAX_LEN) : qRaw;
+
+    const filter: Record<string, unknown> = { status: "active" as const };
+    if (q) {
+      filter.title = { $regex: escapeRegex(q), $options: "i" };
+    }
+
+    const [total, docs] = await Promise.all([
+      Job.countDocuments(filter).exec(),
+      Job.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).exec(),
+    ]);
+
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+    ok(res, 200, {
+      jobs: docs.map((j) => toPublicJob(j, "public")),
+      page,
+      limit,
+      total,
+      totalPages,
+    });
+  }),
+);
+
 jobsRouter.get(
   "/",
   requireAuth,
@@ -232,7 +261,7 @@ jobsRouter.get(
     }
 
     const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
-    const q = qRaw.length > 120 ? qRaw.slice(0, 120) : qRaw;
+    const q = qRaw.length > JOB_Q_MAX_LEN ? qRaw.slice(0, JOB_Q_MAX_LEN) : qRaw;
 
     const filter: Record<string, unknown> = { organizationId: req.orgId };
     if (statusFilter?.length === 1) {

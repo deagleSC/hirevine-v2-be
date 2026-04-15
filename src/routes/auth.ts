@@ -30,11 +30,14 @@ function isMongoDuplicateKey(err: unknown): boolean {
 }
 
 function toPublicUser(user: IUser) {
+  const raw =
+    typeof user.displayName === "string" ? user.displayName.trim() : "";
   return {
     id: user.id,
     email: user.email,
     role: user.role,
     organizationId: user.organizationId?.toString() ?? null,
+    displayName: raw.slice(0, 120),
     createdAt: user.createdAt,
   };
 }
@@ -50,6 +53,88 @@ authRouter.get(
       fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
       return;
     }
+    ok(res, 200, { user: toPublicUser(user) });
+  }),
+);
+
+authRouter.patch(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = req.body as Record<string, unknown> | null | undefined;
+    const b = body ?? {};
+    const hasDisplayName = Object.prototype.hasOwnProperty.call(
+      b,
+      "displayName",
+    );
+    const newPasswordRaw = b.newPassword;
+    const hasNewPassword =
+      typeof newPasswordRaw === "string" && newPasswordRaw.length > 0;
+
+    if (!hasDisplayName && !hasNewPassword) {
+      fail(
+        res,
+        400,
+        ErrorCodes.VALIDATION_ERROR,
+        "Provide displayName and/or newPassword",
+      );
+      return;
+    }
+
+    const user = await User.findById(req.auth!.userId).exec();
+    if (!user) {
+      fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
+      return;
+    }
+
+    if (hasDisplayName) {
+      if (typeof b.displayName !== "string") {
+        fail(
+          res,
+          400,
+          ErrorCodes.VALIDATION_ERROR,
+          "displayName must be a string",
+        );
+        return;
+      }
+      user.displayName = b.displayName.trim().slice(0, 120);
+    }
+
+    if (hasNewPassword) {
+      const currentPassword =
+        typeof b.currentPassword === "string" ? b.currentPassword : "";
+      if (!currentPassword) {
+        fail(
+          res,
+          400,
+          ErrorCodes.VALIDATION_ERROR,
+          "currentPassword is required to change password",
+        );
+        return;
+      }
+      const newPassword = newPasswordRaw as string;
+      if (newPassword.length < MIN_PASSWORD_LEN) {
+        fail(
+          res,
+          400,
+          ErrorCodes.VALIDATION_ERROR,
+          `Password must be at least ${MIN_PASSWORD_LEN} characters`,
+        );
+        return;
+      }
+      if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+        fail(
+          res,
+          400,
+          ErrorCodes.VALIDATION_ERROR,
+          "Current password is incorrect",
+        );
+        return;
+      }
+      user.passwordHash = await hashPassword(newPassword);
+    }
+
+    await user.save();
     ok(res, 200, { user: toPublicUser(user) });
   }),
 );

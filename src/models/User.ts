@@ -12,6 +12,8 @@ export interface IUser extends Document {
   email: string;
   passwordHash: string;
   role: UserRole;
+  /** Optional name shown in the UI; email is always the account identifier. */
+  displayName?: string | null;
   /** Recruiters/admins: employer org. Candidates: usually unset (platform / cross-org apply). */
   organizationId?: Types.ObjectId | null;
   createdAt: Date;
@@ -33,6 +35,12 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: ["recruiter", "candidate", "admin"],
       required: true,
+    },
+    displayName: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+      default: "",
     },
     organizationId: {
       type: Schema.Types.ObjectId,

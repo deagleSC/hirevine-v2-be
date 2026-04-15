@@ -421,18 +421,6 @@ async function main(): Promise<void> {
   );
   console.log("Job set active");
 
-  const { data: browse } = await api<{ jobs: { id: string; title: string }[] }>(
-    "GET",
-    "/api/jobs/browse",
-    undefined,
-  );
-  const inBrowse = browse.jobs.some((j) => j.id === jobId);
-  if (!inBrowse) {
-    console.error("Expected new job in GET /api/jobs/browse");
-    process.exit(1);
-  }
-  console.log("Job visible on browse");
-
   const { data: list } = await api<{ jobs: { id: string }[] }>(
     "GET",
     "/api/jobs",

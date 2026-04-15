@@ -24,12 +24,12 @@ export const openApiSpec: OpenAPIV3.Document = {
     {
       name: "Organizations",
       description:
-        "Employer orgs. Recruiters create one org, then manage jobs under it. Candidates usually have no org.",
+        "Employer orgs. Recruiters create an org or join an existing one by slug, then manage jobs under it. Candidates usually have no org.",
     },
     {
       name: "Jobs",
       description:
-        "Job postings (org-scoped for writes). Public browse of active jobs; candidates apply across orgs. Recruiters list org jobs with **`GET /api/jobs`** (`page`, `limit`, optional `status` / `q`) and use **`GET /api/jobs/options`** for lightweight id/title lists (e.g. application filters).",
+        "Job postings (org-scoped for writes). Anyone can browse active listings with **`GET /api/jobs/catalog`** (`page`, `limit`, optional title `q`). Candidates apply via **`GET /api/jobs/{jobId}`** and **`POST /api/jobs/{jobId}/apply`**. Recruiters list org jobs with **`GET /api/jobs`** (`page`, `limit`, optional `status` / `q`) and use **`GET /api/jobs/options`** for lightweight id/title lists (e.g. application filters).",
     },
     {
       name: "Resumes",
@@ -39,7 +39,7 @@ export const openApiSpec: OpenAPIV3.Document = {
     {
       name: "Applications",
       description:
-        "Candidates: **`GET /api/applications/me`**, quiz (`GET/POST /api/applications/{applicationId}/quiz`), detail (`GET /api/applications/{applicationId}` — status, job summary, `nextStep` only; no node scores). Recruiters/admins: **`GET /api/applications`** — org-wide paginated list (`jobId`, `status`, `page`, `limit`); **`GET /api/jobs/{jobId}/applications`** — applications for one job; detail includes pipeline + node results. Apply using a Blob `resumeUrl` from `POST /api/resumes/upload`.",
+        "Candidates: **`GET /api/applications/me`**, **`GET /api/applications/analytics/me`** (dashboard aggregates), quiz (`GET/POST /api/applications/{applicationId}/quiz`), detail (`GET /api/applications/{applicationId}` — status, job summary, `nextStep` only; no node scores). Recruiters/admins: **`GET /api/applications/analytics/org`** (dashboard aggregates), **`GET /api/applications`** — org-wide paginated list (`jobId`, `status`, `page`, `limit`); **`GET /api/jobs/{jobId}/applications`** — applications for one job; detail includes pipeline + node results. Apply using a Blob `resumeUrl` from `POST /api/resumes/upload`.",
     },
   ],
   paths: {
@@ -110,6 +110,48 @@ export const openApiSpec: OpenAPIV3.Document = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/AuthUserSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+      patch: {
+        tags: ["Auth"],
+        summary: "Update current user profile",
+        operationId: "authMePatch",
+        description:
+          "Updates **displayName** and/or password. Send at least one field. Password change requires **currentPassword** and **newPassword** (min 8 characters). Session cookie is unchanged unless email support is added later.",
+        security: [{}, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AuthMePatchRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AuthUserSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error or wrong current password",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
               },
             },
           },
@@ -233,7 +275,7 @@ export const openApiSpec: OpenAPIV3.Document = {
         summary: "Create organization",
         operationId: "organizationsCreate",
         description:
-          "Recruiter/admin only. Attaches your user to the new org. Fails if you already have an organization.",
+          "Recruiter/admin only. Creates a new org and attaches your user. Fails if you already have an organization. To attach to an existing org instead, use **`POST /api/organizations/join`**.",
         security: [{}, { bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -291,6 +333,78 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/organizations/join": {
+      post: {
+        tags: ["Organizations"],
+        summary: "Join organization by slug",
+        operationId: "organizationsJoin",
+        description:
+          "Recruiter/admin only. Links your user to an existing org when you enter its public slug. Fails if you already have an organization or no org matches the slug.",
+        security: [{}, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/OrganizationJoinRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Joined",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/OrganizationCreateSuccess",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (e.g. candidate)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "No organization with that slug",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "409": {
+            description: "Already in an org",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/organizations/me": {
       get: {
         tags: ["Organizations"],
@@ -324,20 +438,115 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
         },
       },
-    },
-    "/api/jobs/browse": {
-      get: {
-        tags: ["Jobs"],
-        summary: "Browse active jobs",
-        operationId: "jobsBrowse",
+      patch: {
+        tags: ["Organizations"],
+        summary: "Update current organization",
+        operationId: "organizationsMePatch",
         description:
-          "Public. Returns up to 50 active jobs (title, status, organization, full description, timestamps).",
+          "Recruiter/admin. Updates the org you belong to (name and/or slug). At least one field required. Changing the slug does not migrate historical links—share the new slug with teammates who need to join.",
+        security: [{}, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/OrganizationPatchRequest",
+              },
+            },
+          },
+        },
         responses: {
           "200": {
             description: "OK",
             content: {
               "application/json": {
-                schema: { $ref: "#/components/schemas/JobsBrowseSuccess" },
+                schema: { $ref: "#/components/schemas/OrganizationMeSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (e.g. candidate)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "No organization on account",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "409": {
+            description: "Slug already taken",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/organizations/me/leave": {
+      post: {
+        tags: ["Organizations"],
+        summary: "Leave current organization",
+        operationId: "organizationsMeLeave",
+        description:
+          "Recruiter/admin. Clears your organization link. You will need to create or join an org again before managing jobs. Does not delete the organization or its jobs.",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/OrganizationLeaveSuccess",
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden (e.g. candidate)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Not linked to an organization",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
               },
             },
           },
@@ -491,6 +700,44 @@ export const openApiSpec: OpenAPIV3.Document = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/jobs/catalog": {
+      get: {
+        tags: ["Jobs"],
+        summary: "List active job postings (public catalog)",
+        description:
+          "Returns **active** jobs across all organizations with public fields only (no pipeline). Supports `page`, `limit` (max 100), optional `q` (case-insensitive title substring, max 120 chars). Sorted by `updatedAt` descending. No login required; optional cookie/Bearer still accepted.",
+        operationId: "jobsCatalog",
+        security: [{}, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "page",
+            in: "query",
+            schema: { type: "integer", minimum: 1, default: 1 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+          },
+          {
+            name: "q",
+            in: "query",
+            description: "Search job title (case-insensitive substring).",
+            schema: { type: "string", maxLength: 120 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JobsCatalogSuccess" },
               },
             },
           },
@@ -1090,6 +1337,92 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/applications/analytics/org": {
+      get: {
+        tags: ["Applications"],
+        summary: "Recruiter dashboard analytics",
+        operationId: "applicationsAnalyticsOrg",
+        description:
+          "Recruiter or admin with an organization. Returns counts by application status, daily new applications (30 days UTC), jobs by listing status, top jobs by application volume, and headline totals.",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", enum: [true] },
+                    data: { type: "object", additionalProperties: true },
+                  },
+                  required: ["success", "data"],
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/applications/analytics/me": {
+      get: {
+        tags: ["Applications"],
+        summary: "Candidate dashboard analytics",
+        operationId: "applicationsAnalyticsMe",
+        description:
+          "Candidate only. Returns counts by application status, daily applications started (30 days UTC), and total application count.",
+        security: [{}, { bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", enum: [true] },
+                    data: { type: "object", additionalProperties: true },
+                  },
+                  required: ["success", "data"],
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Forbidden",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/applications/{applicationId}/quiz": {
       get: {
         tags: ["Applications"],
@@ -1372,9 +1705,37 @@ export const openApiSpec: OpenAPIV3.Document = {
             description:
               "Employer org for recruiters; often null for marketplace candidates.",
           },
+          displayName: {
+            type: "string",
+            maxLength: 120,
+            description:
+              "Optional display name; empty string means show email only in UI.",
+          },
           createdAt: { type: "string", format: "date-time" },
         },
-        required: ["id", "email", "role", "organizationId", "createdAt"],
+        required: [
+          "id",
+          "email",
+          "role",
+          "organizationId",
+          "displayName",
+          "createdAt",
+        ],
+      },
+      AuthMePatchRequest: {
+        type: "object",
+        description:
+          "At least one of `displayName`, `newPassword` must be present. When setting `newPassword`, `currentPassword` is required.",
+        properties: {
+          displayName: {
+            type: "string",
+            maxLength: 120,
+            description: "Trimmed on save; use empty string to clear.",
+          },
+          currentPassword: { type: "string" },
+          newPassword: { type: "string", minLength: 8 },
+        },
+        minProperties: 1,
       },
       AuthUserSuccess: {
         type: "object",
@@ -1455,6 +1816,55 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
         },
         required: ["name", "slug"],
+      },
+      OrganizationJoinRequest: {
+        type: "object",
+        properties: {
+          slug: {
+            type: "string",
+            maxLength: 64,
+            description:
+              "Existing organization slug (same rules as create). Ask an org admin for the value shown on their Organization page.",
+          },
+        },
+        required: ["slug"],
+      },
+      OrganizationPatchRequest: {
+        type: "object",
+        description: "At least one of `name` or `slug` must be present.",
+        properties: {
+          name: { type: "string", maxLength: 200 },
+          slug: {
+            type: "string",
+            maxLength: 64,
+            description:
+              "Lowercase; letters, numbers, single hyphens between segments.",
+          },
+        },
+        minProperties: 1,
+      },
+      OrganizationLeaveSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              user: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  email: { type: "string" },
+                  role: { type: "string" },
+                  organizationId: { type: "string", nullable: true },
+                },
+                required: ["id", "email", "role", "organizationId"],
+              },
+            },
+            required: ["user"],
+          },
+        },
+        required: ["success", "data"],
       },
       OrganizationCreateSuccess: {
         type: "object",
@@ -1578,23 +1988,6 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
         ],
       },
-      JobsBrowseSuccess: {
-        type: "object",
-        properties: {
-          success: { type: "boolean", enum: [true] },
-          data: {
-            type: "object",
-            properties: {
-              jobs: {
-                type: "array",
-                items: { $ref: "#/components/schemas/JobPublic" },
-              },
-            },
-            required: ["jobs"],
-          },
-        },
-        required: ["success", "data"],
-      },
       JobsListSuccess: {
         type: "object",
         properties: {
@@ -1605,6 +1998,27 @@ export const openApiSpec: OpenAPIV3.Document = {
               jobs: {
                 type: "array",
                 items: { $ref: "#/components/schemas/JobFull" },
+              },
+              page: { type: "integer", minimum: 1 },
+              limit: { type: "integer", minimum: 1 },
+              total: { type: "integer", minimum: 0 },
+              totalPages: { type: "integer", minimum: 0 },
+            },
+            required: ["jobs", "page", "limit", "total", "totalPages"],
+          },
+        },
+        required: ["success", "data"],
+      },
+      JobsCatalogSuccess: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            properties: {
+              jobs: {
+                type: "array",
+                items: { $ref: "#/components/schemas/JobPublic" },
               },
               page: { type: "integer", minimum: 1 },
               limit: { type: "integer", minimum: 1 },
