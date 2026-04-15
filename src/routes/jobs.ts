@@ -500,17 +500,25 @@ jobsRouter.post(
         status: "NODE_1_PENDING",
         resumeUrl,
       });
-      void inngest
-        .send({
+      try {
+        await inngest.send({
           name: HIREVINE_EVENTS.applicationCreated,
           data: { applicationRunId: run._id.toString() },
-        })
-        .catch((e) => {
-          console.error(
-            "[inngest] send hirevine/application.created failed",
-            e,
-          );
         });
+      } catch (e) {
+        await ApplicationRun.findByIdAndDelete(run._id).exec();
+        console.error(
+          "[inngest] send hirevine/application.created failed; removed application run",
+          e,
+        );
+        fail(
+          res,
+          503,
+          ErrorCodes.SERVICE_UNAVAILABLE,
+          "Could not queue resume screening. Check Inngest keys and connectivity, then try applying again.",
+        );
+        return;
+      }
       ok(res, 201, { application: toPublicApplicationRun(run) });
     } catch (err: unknown) {
       if (isMongoDuplicateKey(err)) {

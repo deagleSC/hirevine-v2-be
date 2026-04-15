@@ -6,10 +6,12 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
+    "prestart": "npm run build",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "inngest:dev": "npx --yes inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest",
+    "test:pipeline": "tsx scripts/test-full-pipeline.ts",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "engines": {

@@ -14,6 +14,7 @@
  *   CANDIDATE_PASSWORD       required
  *   INNGEST_POLL_MS          default 45000 (0 to skip DB/Inngest wait)
  *   INNGEST_POLL_INTERVAL_MS default 2000
+ *   E2E_NODE3_POLL_MS        default 120000 — extra time after quiz for Inngest Node 3 (AI can be slow)
  *   ALLOW_ANY_RESUME_URL     dev only: if API returns 503 for upload (no Blob token), use
  *                            https://example.com/... for apply instead.
  *   E2E_CLEAR_PASS_THRESHOLD default true: after generate-pipeline, removes node1.passThreshold
@@ -28,14 +29,15 @@
  * Flow: uploads a PDF resume via POST /api/resumes/upload (needs BLOB_READ_WRITE_TOKEN
  * on the API), then applies with the returned resumeUrl. Restart the API after changing .env.
  *
- * Default file: ../supratik_fe_experimental.pdf (repo sibling under products/). Override with
- * E2E_RESUME_PATH.
+ * Default file (first that exists): ~/Downloads/supratik_resume_fe.pdf, else
+ * ../../supratik_fe_experimental.pdf under products/. Override with E2E_RESUME_PATH.
  */
 
 import "dotenv/config";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 import { connectDb, disconnectDb } from "../src/db/connect";
 import "../src/models";
 import { ApplicationRun } from "../src/models/ApplicationRun";
@@ -55,14 +57,24 @@ const INNGEST_POLL_MS = Number(process.env.INNGEST_POLL_MS ?? "45000");
 const INNGEST_POLL_INTERVAL_MS = Number(
   process.env.INNGEST_POLL_INTERVAL_MS ?? "2000",
 );
+/** After quiz submit, wait for Node 3 / COMPLETED (separate from pre-quiz poll). */
+const E2E_NODE3_POLL_MS = Number(process.env.E2E_NODE3_POLL_MS ?? "120000");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_E2E_RESUME = path.resolve(
+const DOWNLOADS_DEFAULT = path.join(
+  os.homedir(),
+  "Downloads",
+  "supratik_resume_fe.pdf",
+);
+const LEGACY_PRODUCTS_RESUME = path.resolve(
   __dirname,
   "..",
   "..",
   "supratik_fe_experimental.pdf",
 );
+const DEFAULT_E2E_RESUME = existsSync(DOWNLOADS_DEFAULT)
+  ? DOWNLOADS_DEFAULT
+  : LEGACY_PRODUCTS_RESUME;
 const E2E_RESUME_PATH = process.env.E2E_RESUME_PATH ?? DEFAULT_E2E_RESUME;
 const E2E_RESUME_FILENAME = path.basename(E2E_RESUME_PATH);
 
@@ -304,6 +316,11 @@ async function main(): Promise<void> {
   }
 
   console.log("BASE_URL", BASE_URL);
+  if (process.env.HIREVINE_PIPELINE_USE_PROD_CONFIG === "1") {
+    console.log(
+      "HIREVINE_PIPELINE_USE_PROD_CONFIG=1 — parent loaded .env.production; child env inherits production API/Mongo.",
+    );
+  }
   console.log(
     "E2E: OPENROUTER_API_KEY on the API enables real resume + final-report AI; otherwise Node 1/3 use stubs.",
   );
@@ -611,7 +628,7 @@ async function main(): Promise<void> {
       node2AfterQuiz,
     );
 
-    const deadline3 = Date.now() + INNGEST_POLL_MS;
+    const deadline3 = Date.now() + E2E_NODE3_POLL_MS;
     while (Date.now() < deadline3) {
       const r = await ApplicationRun.findById(applicationId).exec();
       if (r?.status === "COMPLETED") break;
@@ -645,9 +662,21 @@ async function main(): Promise<void> {
       !node3 ||
       node3.nodeType !== "FINAL_REPORT"
     ) {
-      console.error(
-        "Quiz or Inngest Node 3 did not complete. Ensure `npm run inngest:dev` is running and OPENROUTER_API_KEY is set if you expect real Node 3 AI output.",
-      );
+      if (finalRun?.status === "NODE_3_PENDING" && !node3) {
+        console.error(
+          "Application is still NODE_3_PENDING with no Node 3 result after " +
+            `${E2E_NODE3_POLL_MS}ms — Inngest never ran the final-report step. ` +
+            "Run `npm run inngest:dev` (Inngest Dev Server) in a second terminal while the API is up, " +
+            "and ensure INNGEST_EVENT_KEY / signing keys match your Inngest app. " +
+            "If quiz POST returned 503, the API failed to enqueue the event (check server logs).",
+        );
+      } else {
+        console.error(
+          "Quiz or Inngest Node 3 did not complete. Ensure `npm run inngest:dev` is running; " +
+            "set OPENROUTER_API_KEY on the API for real Node 3 AI (otherwise a stub should still complete). " +
+            `status=${finalRun?.status ?? "(unknown)"} E2E_NODE3_POLL_MS=${E2E_NODE3_POLL_MS}`,
+        );
+      }
       process.exit(1);
     }
     logPipelineNode(

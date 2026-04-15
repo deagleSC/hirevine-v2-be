@@ -4,7 +4,8 @@ import { extractTextFromPdfBuffer } from "../resume/extractTextFromPdf";
 import { isResumeStorageUrl } from "../resume/isResumeStorageUrl";
 
 const DEFAULT_MAX_BYTES = 512 * 1024;
-const DEFAULT_TIMEOUT_MS = 20_000;
+/** Per network phase (Blob SDK vs plain HTTP); PDF parse is not tied to this. */
+const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_CHARS = 48_000;
 
 function parseIpv4(host: string): number[] | null {
@@ -60,6 +61,24 @@ function looksLikePdfMagic(buf: Uint8Array): boolean {
   return (
     buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46
   ); // %PDF
+}
+
+function bufHeadHex(buf: Uint8Array, max = 8): string {
+  const n = Math.min(max, buf.length);
+  if (n === 0) return "(empty)";
+  let out = "";
+  for (let i = 0; i < n; i++) {
+    out += buf[i]!.toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+/** Blob SDK stream can differ from a plain HTTPS GET; retry once on hard PDF failures. */
+function shouldRefetchResumeViaHttpAfterBlobFailure(error: string): boolean {
+  return (
+    error.includes("PDF text extraction failed") ||
+    error === "Response is not a valid PDF"
+  );
 }
 
 /** Plain .txt resumes sometimes come back as octet-stream from object storage. */
@@ -152,8 +171,19 @@ async function resumeBytesToText(
         contentType: ct ?? "application/pdf",
         truncated,
       };
-    } catch {
-      return { ok: false, error: "PDF text extraction failed" };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      const peek = `bytes=${buf.length} pdf_magic=${looksLikePdfMagic(buf) ? "yes" : "no"} head_hex=${bufHeadHex(buf)}`;
+      console.error(
+        "[fetchResumeText] PDF text extraction failed:",
+        peek,
+        detail,
+        e,
+      );
+      return {
+        ok: false,
+        error: `PDF text extraction failed (${peek}): ${detail || "(empty message)"}`,
+      };
     }
   }
 
@@ -219,41 +249,64 @@ export async function fetchResumeTextFromUrl(
 
   const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const fromSdk = await tryFetchResumeBytesViaBlobSdk(
-      resumeUrl,
-      controller.signal,
-      maxBytes,
-    );
+    // Separate controllers: if Blob `get()` hits the timeout, the signal must
+    // not be reused for the HTTP fallback (aborted fetch fails immediately).
+    const sdkController = new AbortController();
+    const sdkTimer = setTimeout(() => sdkController.abort(), timeoutMs);
+    let fromSdk: { buf: Uint8Array; ct: string | null } | null = null;
+    try {
+      fromSdk = await tryFetchResumeBytesViaBlobSdk(
+        resumeUrl,
+        sdkController.signal,
+        maxBytes,
+      );
+    } finally {
+      clearTimeout(sdkTimer);
+    }
     if (fromSdk) {
-      return await resumeBytesToText(fromSdk.buf, fromSdk.ct);
+      const fromBlob = await resumeBytesToText(fromSdk.buf, fromSdk.ct);
+      if (fromBlob.ok) {
+        return fromBlob;
+      }
+      if (!shouldRefetchResumeViaHttpAfterBlobFailure(fromBlob.error)) {
+        return fromBlob;
+      }
+      console.warn(
+        "[fetchResumeText] Blob SDK body failed text extraction; retrying same URL via HTTPS GET:",
+        fromBlob.error,
+      );
     }
 
-    const res = await fetch(url.href, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        Accept:
-          "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      },
-    });
+    const httpController = new AbortController();
+    const httpTimer = setTimeout(() => httpController.abort(), timeoutMs);
+    try {
+      const res = await fetch(url.href, {
+        method: "GET",
+        redirect: "follow",
+        signal: httpController.signal,
+        headers: {
+          Accept:
+            "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        },
+      });
 
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status} from resume URL` };
+      if (!res.ok) {
+        return { ok: false, error: `HTTP ${res.status} from resume URL` };
+      }
+
+      const ctRaw =
+        res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
+      const ct = ctRaw?.toLowerCase() ?? null;
+      const buf = await readBodyWithCap(res.body, maxBytes);
+
+      return await resumeBytesToText(buf, ct);
+    } finally {
+      clearTimeout(httpTimer);
     }
-
-    const ctRaw =
-      res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
-    const ct = ctRaw?.toLowerCase() ?? null;
-    const buf = await readBodyWithCap(res.body, maxBytes);
-
-    return await resumeBytesToText(buf, ct);
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") {
       return { ok: false, error: "Resume fetch timed out" };
@@ -262,8 +315,6 @@ export async function fetchResumeTextFromUrl(
       ok: false,
       error: e instanceof Error ? e.message : "Resume fetch failed",
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

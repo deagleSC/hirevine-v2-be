@@ -404,6 +404,8 @@ applicationsRouter.post(
       (p) => p.correct,
     ).length;
 
+    const previousCurrentFitScore = run.currentFitScore;
+
     await NodeResult.create({
       applicationRunId: run._id,
       jobId: run.jobId,
@@ -421,17 +423,31 @@ applicationsRouter.post(
     run.currentFitScore = graded.score;
     await run.save();
 
-    void inngest
-      .send({
+    try {
+      await inngest.send({
         name: HIREVINE_EVENTS.quizSubmitted,
         data: { applicationRunId: run._id.toString() },
-      })
-      .catch((e) => {
-        console.error(
-          "[inngest] send hirevine/application.quiz_submitted failed",
-          e,
-        );
       });
+    } catch (e) {
+      await NodeResult.deleteOne({
+        applicationRunId: run._id,
+        nodeIndex: 2,
+      }).exec();
+      run.status = "NODE_2_PENDING";
+      run.currentFitScore = previousCurrentFitScore;
+      await run.save();
+      console.error(
+        "[inngest] send hirevine/application.quiz_submitted failed; rolled back quiz submission",
+        e,
+      );
+      fail(
+        res,
+        503,
+        ErrorCodes.SERVICE_UNAVAILABLE,
+        "Could not queue the next pipeline step (final report). Check Inngest keys and connectivity, then try submitting the quiz again.",
+      );
+      return;
+    }
 
     ok(res, 200, { application: toPublicApplicationRun(run) });
   }),
