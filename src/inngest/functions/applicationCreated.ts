@@ -83,7 +83,9 @@ export const applicationCreatedNode1: InngestFunction.Like =
         const fetchResult = await fetchResumeTextFromUrl(run.resumeUrl);
         const resumeText = fetchResult.ok ? fetchResult.text : "";
         const resumeContextNote = !fetchResult.ok
-          ? `Could not load resume from URL: ${fetchResult.error}`
+          ? fetchResult.error.includes("no selectable text")
+            ? fetchResult.error
+            : `Could not load resume from URL: ${fetchResult.error}`
           : fetchResult.truncated
             ? "Resume text was truncated before model input."
             : undefined;

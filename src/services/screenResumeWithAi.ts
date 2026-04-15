@@ -63,6 +63,7 @@ Rules:
 - Output only via the structured schema.
 - Score must reflect evidence in the resume text; do not invent experience.
 - If the resume text is missing or unusable, keep the score low and say so in reasoning.
+- If the context note explains a specific failure (e.g. URL load error vs PDF with no extractable text), align your reasoning with that cause. Do not say the file could not be "accessed" or "retrieved" when the context indicates the file was loaded but had no machine-readable text (e.g. scanned PDF).
 - matchedMustHaveSkills / matchedNiceToHaveSkills should be subsets of the lists above when those lists are non-empty.`,
   });
 

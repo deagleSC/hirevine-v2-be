@@ -1,5 +1,7 @@
+import { get } from "@vercel/blob";
 import { env } from "../config/env";
 import { extractTextFromPdfBuffer } from "../resume/extractTextFromPdf";
+import { isResumeStorageUrl } from "../resume/isResumeStorageUrl";
 
 const DEFAULT_MAX_BYTES = 512 * 1024;
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -79,6 +81,123 @@ function tryDecodePlainResumeFromBinary(buf: Uint8Array): string | null {
 }
 
 /**
+ * Hirevine uploads use `access: "public"` URLs, but anonymous HTTP GET from
+ * Inngest/workers can still fail; `@vercel/blob` `get()` sends the store token.
+ */
+async function tryFetchResumeBytesViaBlobSdk(
+  resumeUrl: string,
+  signal: AbortSignal,
+  maxBytes: number,
+): Promise<{ buf: Uint8Array; ct: string | null } | null> {
+  const token = env.blob.readWriteToken;
+  if (!token || !isResumeStorageUrl(resumeUrl)) {
+    return null;
+  }
+  try {
+    const result = await get(resumeUrl, {
+      access: "public",
+      token,
+      abortSignal: signal,
+      useCache: false,
+    });
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      return null;
+    }
+    const buf = await readBodyWithCap(result.stream, maxBytes);
+    const raw =
+      result.blob.contentType?.split(";")[0]?.trim() ??
+      result.headers.get("content-type")?.split(";")[0]?.trim() ??
+      null;
+    return { buf, ct: raw ? raw.toLowerCase() : null };
+  } catch (e) {
+    console.warn(
+      "[fetchResumeText] @vercel/blob get() failed, will try plain HTTP:",
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
+}
+
+async function resumeBytesToText(
+  buf: Uint8Array,
+  ct: string | null,
+): Promise<FetchResumeTextResult> {
+  const isPdf =
+    looksLikePdfMagic(buf) ||
+    ct === "application/pdf" ||
+    ct === "application/x-pdf" ||
+    (ct !== null && ct.includes("pdf"));
+
+  if (isPdf) {
+    if (!looksLikePdfMagic(buf)) {
+      return { ok: false, error: "Response is not a valid PDF" };
+    }
+    try {
+      let text = await extractTextFromPdfBuffer(buf);
+      const truncated = text.length > MAX_CHARS;
+      if (truncated) {
+        text = text.slice(0, MAX_CHARS);
+      }
+      text = text.replace(/\0/g, " ").trim();
+      if (!text.length) {
+        return {
+          ok: false,
+          error:
+            "PDF downloaded but no selectable text was found (common for scanned/image-only PDFs)",
+        };
+      }
+      return {
+        ok: true,
+        text,
+        contentType: ct ?? "application/pdf",
+        truncated,
+      };
+    } catch {
+      return { ok: false, error: "PDF text extraction failed" };
+    }
+  }
+
+  const textual =
+    !ct ||
+    ct.startsWith("text/") ||
+    ct === "application/json" ||
+    ct === "application/xml";
+
+  if (!textual) {
+    const asPlain = tryDecodePlainResumeFromBinary(buf);
+    if (asPlain) {
+      let text = asPlain;
+      const truncated = text.length > MAX_CHARS;
+      if (truncated) {
+        text = text.slice(0, MAX_CHARS);
+      }
+      return {
+        ok: true,
+        text,
+        contentType: ct ?? "text/plain",
+        truncated,
+      };
+    }
+    return {
+      ok: false,
+      error: `Unsupported Content-Type for text extraction: ${ct ?? "unknown"}`,
+    };
+  }
+
+  let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  const truncated = text.length > MAX_CHARS;
+  if (truncated) {
+    text = text.slice(0, MAX_CHARS);
+  }
+  text = text.replace(/\0/g, " ").trim();
+  if (!text.length) {
+    return { ok: false, error: "Resume body was empty after decode" };
+  }
+
+  return { ok: true, text, contentType: ct, truncated };
+}
+
+/**
  * Fetch resume from URL and extract plain text for LLM screening.
  * Supports textual types and PDF (text extraction via pdf-parse).
  */
@@ -104,6 +223,15 @@ export async function fetchResumeTextFromUrl(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const fromSdk = await tryFetchResumeBytesViaBlobSdk(
+      resumeUrl,
+      controller.signal,
+      maxBytes,
+    );
+    if (fromSdk) {
+      return await resumeBytesToText(fromSdk.buf, fromSdk.ct);
+    }
+
     const res = await fetch(url.href, {
       method: "GET",
       redirect: "follow",
@@ -111,7 +239,6 @@ export async function fetchResumeTextFromUrl(
       headers: {
         Accept:
           "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
-        // Match a common browser UA so edge caches / WAFs behave like a normal download.
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       },
@@ -126,81 +253,7 @@ export async function fetchResumeTextFromUrl(
     const ct = ctRaw?.toLowerCase() ?? null;
     const buf = await readBodyWithCap(res.body, maxBytes);
 
-    // Prefer file signature over Content-Type: CDNs often serve PDFs as
-    // application/octet-stream, application/download, or unknown types.
-    const isPdf =
-      looksLikePdfMagic(buf) ||
-      ct === "application/pdf" ||
-      ct === "application/x-pdf" ||
-      (ct !== null && ct.includes("pdf"));
-
-    if (isPdf) {
-      if (!looksLikePdfMagic(buf)) {
-        return { ok: false, error: "Response is not a valid PDF" };
-      }
-      try {
-        let text = await extractTextFromPdfBuffer(buf);
-        const truncated = text.length > MAX_CHARS;
-        if (truncated) {
-          text = text.slice(0, MAX_CHARS);
-        }
-        text = text.replace(/\0/g, " ").trim();
-        if (!text.length) {
-          return {
-            ok: false,
-            error:
-              "PDF downloaded but no selectable text was found (common for scanned/image-only PDFs)",
-          };
-        }
-        return {
-          ok: true,
-          text,
-          contentType: ct ?? "application/pdf",
-          truncated,
-        };
-      } catch {
-        return { ok: false, error: "PDF text extraction failed" };
-      }
-    }
-
-    const textual =
-      !ct ||
-      ct.startsWith("text/") ||
-      ct === "application/json" ||
-      ct === "application/xml";
-
-    if (!textual) {
-      const asPlain = tryDecodePlainResumeFromBinary(buf);
-      if (asPlain) {
-        let text = asPlain;
-        const truncated = text.length > MAX_CHARS;
-        if (truncated) {
-          text = text.slice(0, MAX_CHARS);
-        }
-        return {
-          ok: true,
-          text,
-          contentType: ct ?? "text/plain",
-          truncated,
-        };
-      }
-      return {
-        ok: false,
-        error: `Unsupported Content-Type for text extraction: ${ct ?? "unknown"}`,
-      };
-    }
-
-    let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-    const truncated = text.length > MAX_CHARS;
-    if (truncated) {
-      text = text.slice(0, MAX_CHARS);
-    }
-    text = text.replace(/\0/g, " ").trim();
-    if (!text.length) {
-      return { ok: false, error: "Resume body was empty after decode" };
-    }
-
-    return { ok: true, text, contentType: ct, truncated };
+    return await resumeBytesToText(buf, ct);
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") {
       return { ok: false, error: "Resume fetch timed out" };

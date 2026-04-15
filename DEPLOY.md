@@ -19,7 +19,7 @@ Set these in **Vercel → Project → Settings → Environment Variables** (Prod
 | `MONGODB_URI`             | Yes         | Connection string                                                             |
 | `JWT_SECRET`              | Yes         | Strong random secret                                                          |
 | `CORS_ORIGIN`             | Recommended | Your frontend origin(s), comma-separated                                      |
-| `BLOB_READ_WRITE_TOKEN`   | Yes         | Resume uploads                                                                |
+| `BLOB_READ_WRITE_TOKEN`   | Yes         | Resume uploads; Inngest Node 1 uses `@vercel/blob` `get()` with this token to read resumes reliably |
 | `OPENROUTER_API_KEY`      | Recommended | Real AI; if missing, generate-pipeline returns 503 and Inngest uses stubs      |
 | `INNGEST_SIGNING_KEY`     | Yes         | Inngest Cloud invokes `/api/inngest`                                          |
 | `INNGEST_EVENT_KEY`       | Yes         | API sends events (`apply`, quiz)                                              |
