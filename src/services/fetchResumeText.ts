@@ -60,6 +60,24 @@ function looksLikePdfMagic(buf: Uint8Array): boolean {
   ); // %PDF
 }
 
+/** Plain .txt resumes sometimes come back as octet-stream from object storage. */
+function tryDecodePlainResumeFromBinary(buf: Uint8Array): string | null {
+  if (buf.length < 20 || looksLikePdfMagic(buf)) return null;
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  const trimmed = text.replace(/\0/g, " ").trim();
+  if (trimmed.length < 20) return null;
+  const replacement = (trimmed.match(/\ufffd/g) ?? []).length;
+  if (replacement > trimmed.length * 0.02) return null;
+  const sample = trimmed.slice(0, 2000);
+  let ctrl = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const c = sample.charCodeAt(i);
+    if (c < 32 && c !== 9 && c !== 10 && c !== 13) ctrl++;
+  }
+  if (ctrl > sample.length * 0.03) return null;
+  return trimmed;
+}
+
 /**
  * Fetch resume from URL and extract plain text for LLM screening.
  * Supports textual types and PDF (text extraction via pdf-parse).
@@ -93,7 +111,9 @@ export async function fetchResumeTextFromUrl(
       headers: {
         Accept:
           "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
-        "User-Agent": "HirevineResumeFetcher/1.0",
+        // Match a common browser UA so edge caches / WAFs behave like a normal download.
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       },
     });
 
@@ -101,16 +121,18 @@ export async function fetchResumeTextFromUrl(
       return { ok: false, error: `HTTP ${res.status} from resume URL` };
     }
 
-    const ct = res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
+    const ctRaw =
+      res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
+    const ct = ctRaw?.toLowerCase() ?? null;
     const buf = await readBodyWithCap(res.body, maxBytes);
 
+    // Prefer file signature over Content-Type: CDNs often serve PDFs as
+    // application/octet-stream, application/download, or unknown types.
     const isPdf =
+      looksLikePdfMagic(buf) ||
       ct === "application/pdf" ||
       ct === "application/x-pdf" ||
-      (looksLikePdfMagic(buf) &&
-        (ct === "application/octet-stream" ||
-          ct === "binary/octet-stream" ||
-          !ct));
+      (ct !== null && ct.includes("pdf"));
 
     if (isPdf) {
       if (!looksLikePdfMagic(buf)) {
@@ -124,7 +146,11 @@ export async function fetchResumeTextFromUrl(
         }
         text = text.replace(/\0/g, " ").trim();
         if (!text.length) {
-          return { ok: false, error: "No extractable text in PDF" };
+          return {
+            ok: false,
+            error:
+              "PDF downloaded but no selectable text was found (common for scanned/image-only PDFs)",
+          };
         }
         return {
           ok: true,
@@ -144,6 +170,20 @@ export async function fetchResumeTextFromUrl(
       ct === "application/xml";
 
     if (!textual) {
+      const asPlain = tryDecodePlainResumeFromBinary(buf);
+      if (asPlain) {
+        let text = asPlain;
+        const truncated = text.length > MAX_CHARS;
+        if (truncated) {
+          text = text.slice(0, MAX_CHARS);
+        }
+        return {
+          ok: true,
+          text,
+          contentType: ct ?? "text/plain",
+          truncated,
+        };
+      }
       return {
         ok: false,
         error: `Unsupported Content-Type for text extraction: ${ct ?? "unknown"}`,
