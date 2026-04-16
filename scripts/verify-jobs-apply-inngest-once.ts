@@ -3,10 +3,12 @@
  * Remove this file after you are done verifying.
  *
  * Prerequisites:
- * - API running (e.g. npm run dev on port 8000)
- * - For pipeline stub: `npm run inngest:dev` in another terminal
+ * - API reachable at BASE_URL
+ * - **Local Inngest (default):** `npm run inngest:dev` while the API is up; leave `E2E_INNGEST_TARGET` unset or `local`.
+ * - **Inngest Cloud:** set `E2E_INNGEST_TARGET=cloud` (see `npm run test:pipeline:cloud`). Dashboard “Serve” URL must hit `${BASE_URL}/api/inngest`.
  *
  * Env:
+ *   E2E_INNGEST_TARGET       `local` (default) | `cloud` — cloud uses longer poll defaults
  *   BASE_URL                 default http://127.0.0.1:8000
  *   RECRUITER_EMAIL          default recruiter2001@yopmail.com
  *   CANDIDATE_EMAIL          default candidate2001@yopmail.com
@@ -53,12 +55,48 @@ const CANDIDATE_EMAIL =
   process.env.CANDIDATE_EMAIL ?? "candidate2001@yopmail.com";
 const RECRUITER_PASSWORD = process.env.RECRUITER_PASSWORD ?? "";
 const CANDIDATE_PASSWORD = process.env.CANDIDATE_PASSWORD ?? "";
-const INNGEST_POLL_MS = Number(process.env.INNGEST_POLL_MS ?? "45000");
+
+const E2E_INNGEST_TARGET_RAW = (process.env.E2E_INNGEST_TARGET ?? "local")
+  .trim()
+  .toLowerCase();
+const isCloudInngestTarget = E2E_INNGEST_TARGET_RAW === "cloud";
+if (
+  E2E_INNGEST_TARGET_RAW !== "local" &&
+  E2E_INNGEST_TARGET_RAW !== "cloud"
+) {
+  console.error(
+    `E2E_INNGEST_TARGET must be "local" or "cloud" (got "${process.env.E2E_INNGEST_TARGET ?? ""}").`,
+  );
+  process.exit(1);
+}
+
+const INNGEST_POLL_MS = Number(
+  process.env.INNGEST_POLL_MS ??
+    (isCloudInngestTarget ? "120000" : "45000"),
+);
 const INNGEST_POLL_INTERVAL_MS = Number(
   process.env.INNGEST_POLL_INTERVAL_MS ?? "2000",
 );
 /** After quiz submit, wait for Node 3 / COMPLETED (separate from pre-quiz poll). */
-const E2E_NODE3_POLL_MS = Number(process.env.E2E_NODE3_POLL_MS ?? "120000");
+const E2E_NODE3_POLL_MS = Number(
+  process.env.E2E_NODE3_POLL_MS ??
+    (isCloudInngestTarget ? "240000" : "120000"),
+);
+
+function inngestStallHint(step: "node1" | "node3"): string {
+  if (isCloudInngestTarget) {
+    return (
+      `Inngest Cloud did not finish ${step} in time. Check: (1) Inngest dashboard → app sync URL is ${BASE_URL}/api/inngest, ` +
+      "(2) latest function runs / errors, (3) Vercel deployment logs. " +
+      "Increase INNGEST_POLL_MS or E2E_NODE3_POLL_MS if cold starts are slow."
+    );
+  }
+  return step === "node1"
+    ? "Run `npm run inngest:dev` while the API is up, then re-run this script."
+    : "Run `npm run inngest:dev` (Inngest Dev Server) in a second terminal while the API is up, " +
+        "and ensure INNGEST_EVENT_KEY / signing keys match your Inngest app. " +
+        "If quiz POST returned 503, the API failed to enqueue the event (check server logs).";
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DEFAULT = path.join(
@@ -316,6 +354,12 @@ async function main(): Promise<void> {
   }
 
   console.log("BASE_URL", BASE_URL);
+  console.log(
+    `E2E_INNGEST_TARGET=${E2E_INNGEST_TARGET_RAW} (cloud = deployed API + Inngest Cloud; longer default polls)`,
+  );
+  console.log(
+    `poll: INNGEST_POLL_MS=${INNGEST_POLL_MS} INNGEST_POLL_INTERVAL_MS=${INNGEST_POLL_INTERVAL_MS} E2E_NODE3_POLL_MS=${E2E_NODE3_POLL_MS}`,
+  );
   if (process.env.HIREVINE_PIPELINE_USE_PROD_CONFIG === "1") {
     console.log(
       "HIREVINE_PIPELINE_USE_PROD_CONFIG=1 — parent loaded .env.production; child env inherits production API/Mongo.",
@@ -561,7 +605,8 @@ async function main(): Promise<void> {
         );
       } else {
         console.error(
-          "Inngest Node 1 did not reach NODE_2_PENDING in time. Run `npm run inngest:dev` while the API is up, then re-run this script.",
+          "Inngest Node 1 did not reach NODE_2_PENDING in time. " +
+            inngestStallHint("node1"),
         );
       }
       process.exit(1);
@@ -666,13 +711,14 @@ async function main(): Promise<void> {
         console.error(
           "Application is still NODE_3_PENDING with no Node 3 result after " +
             `${E2E_NODE3_POLL_MS}ms — Inngest never ran the final-report step. ` +
-            "Run `npm run inngest:dev` (Inngest Dev Server) in a second terminal while the API is up, " +
-            "and ensure INNGEST_EVENT_KEY / signing keys match your Inngest app. " +
-            "If quiz POST returned 503, the API failed to enqueue the event (check server logs).",
+            inngestStallHint("node3"),
         );
       } else {
         console.error(
-          "Quiz or Inngest Node 3 did not complete. Ensure `npm run inngest:dev` is running; " +
+          "Quiz or Inngest Node 3 did not complete. " +
+            (isCloudInngestTarget
+              ? inngestStallHint("node3") + " "
+              : "Ensure `npm run inngest:dev` is running; ") +
             "set OPENROUTER_API_KEY on the API for real Node 3 AI (otherwise a stub should still complete). " +
             `status=${finalRun?.status ?? "(unknown)"} E2E_NODE3_POLL_MS=${E2E_NODE3_POLL_MS}`,
         );
