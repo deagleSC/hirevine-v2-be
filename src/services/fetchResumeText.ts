@@ -81,6 +81,35 @@ function shouldRefetchResumeViaHttpAfterBlobFailure(error: string): boolean {
   );
 }
 
+type ResumeUrlBytesOk = { ok: true; buf: Uint8Array; ct: string | null };
+type ResumeUrlBytesErr = { ok: false; status: number };
+
+/**
+ * Plain HTTPS GET for a resume URL (no Bearer). Public Vercel Blob URLs work here even when
+ * `get(..., { token })` returns 400 (e.g. `BLOB_READ_WRITE_TOKEN` is for a different store than
+ * the hostname embedded in the URL — common across local vs production env files).
+ */
+async function fetchResumeUrlBytes(
+  href: string,
+  signal: AbortSignal,
+  maxBytes: number,
+  headers: Record<string, string>,
+): Promise<ResumeUrlBytesOk | ResumeUrlBytesErr> {
+  const res = await fetch(href, {
+    method: "GET",
+    redirect: "follow",
+    signal,
+    headers,
+  });
+  if (!res.ok) {
+    return { ok: false, status: res.status };
+  }
+  const ctRaw = res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
+  const ct = ctRaw?.toLowerCase() ?? null;
+  const buf = await readBodyWithCap(res.body, maxBytes);
+  return { ok: true, buf, ct };
+}
+
 /** Plain .txt resumes sometimes come back as octet-stream from object storage. */
 function tryDecodePlainResumeFromBinary(buf: Uint8Array): string | null {
   if (buf.length < 20 || looksLikePdfMagic(buf)) return null;
@@ -129,9 +158,12 @@ async function tryFetchResumeBytesViaBlobSdk(
       null;
     return { buf, ct: raw ? raw.toLowerCase() : null };
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const hint400 = msg.includes("400")
+      ? " [hint: BLOB_READ_WRITE_TOKEN store may not match this blob URL; anonymous GET is used first for public blobs]"
+      : "";
     console.warn(
-      "[fetchResumeText] @vercel/blob get() failed, will try plain HTTP:",
-      e instanceof Error ? e.message : e,
+      `[fetchResumeText] @vercel/blob get() failed, will try plain HTTPS GET: ${msg}${hint400}`,
     );
     return null;
   }
@@ -251,8 +283,47 @@ export async function fetchResumeTextFromUrl(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   try {
-    // Separate controllers: if Blob `get()` hits the timeout, the signal must
-    // not be reused for the HTTP fallback (aborted fetch fails immediately).
+    // Separate controllers per phase so a timed-out signal is never reused.
+    const acceptHeaders = {
+      Accept:
+        "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
+    };
+    const browserHeaders = {
+      ...acceptHeaders,
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    };
+
+    // 1) Hirevine-managed public blob URLs are readable without Bearer. Try this before
+    //    @vercel/blob `get()` to avoid 400 when the env token belongs to another store.
+    if (isResumeStorageUrl(resumeUrl) && url.protocol === "https:") {
+      const anonController = new AbortController();
+      const anonTimer = setTimeout(() => anonController.abort(), timeoutMs);
+      try {
+        const anon = await fetchResumeUrlBytes(
+          url.href,
+          anonController.signal,
+          maxBytes,
+          acceptHeaders,
+        );
+        if (anon.ok) {
+          const parsed = await resumeBytesToText(anon.buf, anon.ct);
+          if (parsed.ok) {
+            return parsed;
+          }
+          if (!shouldRefetchResumeViaHttpAfterBlobFailure(parsed.error)) {
+            return parsed;
+          }
+          console.warn(
+            "[fetchResumeText] anonymous HTTPS body failed text extraction; will try Blob SDK then browser-like GET:",
+            parsed.error,
+          );
+        }
+      } finally {
+        clearTimeout(anonTimer);
+      }
+    }
+
     const sdkController = new AbortController();
     const sdkTimer = setTimeout(() => sdkController.abort(), timeoutMs);
     let fromSdk: { buf: Uint8Array; ct: string | null } | null = null;
@@ -282,28 +353,19 @@ export async function fetchResumeTextFromUrl(
     const httpController = new AbortController();
     const httpTimer = setTimeout(() => httpController.abort(), timeoutMs);
     try {
-      const res = await fetch(url.href, {
-        method: "GET",
-        redirect: "follow",
-        signal: httpController.signal,
-        headers: {
-          Accept:
-            "text/plain,text/html,text/markdown,application/json,application/pdf,*/*",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        },
-      });
-
-      if (!res.ok) {
-        return { ok: false, error: `HTTP ${res.status} from resume URL` };
+      const viaHttp = await fetchResumeUrlBytes(
+        url.href,
+        httpController.signal,
+        maxBytes,
+        browserHeaders,
+      );
+      if (!viaHttp.ok) {
+        return {
+          ok: false,
+          error: `HTTP ${viaHttp.status} from resume URL`,
+        };
       }
-
-      const ctRaw =
-        res.headers.get("content-type")?.split(";")[0]?.trim() ?? null;
-      const ct = ctRaw?.toLowerCase() ?? null;
-      const buf = await readBodyWithCap(res.body, maxBytes);
-
-      return await resumeBytesToText(buf, ct);
+      return await resumeBytesToText(viaHttp.buf, viaHttp.ct);
     } finally {
       clearTimeout(httpTimer);
     }
