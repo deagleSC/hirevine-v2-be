@@ -54,7 +54,16 @@ ${params.quizNodeSummary}
 Rules:
 - Base the report only on the inputs above; do not invent interview answers or resume facts.
 - overallScore should reflect both resume and quiz unless instructions say otherwise.
-- Be direct and professional. Output only via the structured schema.`,
+- Be direct and professional.
+- The hiring summary must be a detailed report on the candidate's pipeline, not a short blurb.
+- The pipelineReportMarkdown must include:
+  - "## Pipeline overview" (1-2 paragraphs)
+  - "## Stage 1 — Resume screen" (strengths, gaps, evidence, suggested follow-ups)
+  - "## Stage 2 — Quiz" (strengths, gaps, evidence, suggested follow-ups)
+  - "## Overall assessment" (how the stages combine; trade-offs)
+  - "## Recommendation" (clear decision + why, plus next-step interview plan)
+- Keep executiveSummary short, but let pipelineReportMarkdown be the detailed report.
+- Output only via the structured schema.`,
   });
 
   return object;

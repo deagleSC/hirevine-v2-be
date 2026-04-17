@@ -130,10 +130,12 @@ export const quizSubmittedNode3: InngestFunction.Like = inngest.createFunction(
           nodeIndex: 3,
           nodeType: "FINAL_REPORT",
           score: report.overallScore,
-          reasoning: report.executiveSummary,
+          reasoning: report.pipelineReportMarkdown,
           payload: {
             ai: true,
             executiveSummary: report.executiveSummary,
+            pipelineReportMarkdown: report.pipelineReportMarkdown,
+            stageBreakdown: report.stageBreakdown,
             keyStrengths: report.keyStrengths,
             risksOrGaps: report.risksOrGaps,
             hireRecommendation: report.hireRecommendation,
