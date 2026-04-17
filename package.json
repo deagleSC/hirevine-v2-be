@@ -19,6 +19,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
     "@ai-sdk/openai": "^3.0.49",
     "@vercel/blob": "^2.3.2",
     "ai": "^6.0.141",

@@ -1,3 +1,4 @@
+import "../polyfills/installPdfDomPolyfills";
 import type { PDFParse } from "pdf-parse";
 import type { TextResult } from "pdf-parse";
 
