@@ -1,5 +1,6 @@
 import "../polyfills/installPdfDomPolyfills";
-import type { PDFParse } from "pdf-parse";
+import "../polyfills/installPdfWorker";
+import { PDFParse } from "pdf-parse";
 import type { TextResult } from "pdf-parse";
 
 function textFromPdfParseResult(result: TextResult): string {
@@ -40,7 +41,6 @@ export async function extractTextFromPdfBuffer(
   const data = new Uint8Array(buf.byteLength);
   data.set(buf);
 
-  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data });
   try {
     const result = await parser.getText();
