@@ -4,6 +4,13 @@ Backend service for **Hirevine**, a hiring automation platform that helps teams 
 
 This repository is the **HTTP API** layer: authentication, organizations and jobs, resume storage, application lifecycle, OpenAPI documentation, and asynchronous pipeline execution via [Inngest](https://www.inngest.com/).
 
+## Related repositories
+
+| Repository | Role |
+|------------|------|
+| [hirevine-v2-web](../hirevine-v2-web/) | Product web app (recruiters & candidates); set `NEXT_PUBLIC_API_URL` to this API |
+| [hirevine-marketing-website](../hirevine-marketing-website/) | Public marketing site; CTAs point at the deployed web app |
+
 ---
 
 ## Table of contents
