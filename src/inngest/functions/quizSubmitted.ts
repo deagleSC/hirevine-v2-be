@@ -31,8 +31,9 @@ payload (may be truncated): ${payload}`;
 }
 
 /**
- * Node 3: hiring-manager report. Uses OpenRouter when `OPENROUTER_API_KEY` is set;
- * otherwise a short stub summary is stored.
+ * Node 3: hiring-manager **pipeline report** (Markdown on `NodeResult.reasoning`,
+ * structured fields in `payload`). Uses OpenRouter when `OPENROUTER_API_KEY` is set;
+ * otherwise a short Markdown stub is stored so the run can complete.
  */
 export const quizSubmittedNode3: InngestFunction.Like = inngest.createFunction(
   {
@@ -91,8 +92,16 @@ export const quizSubmittedNode3: InngestFunction.Like = inngest.createFunction(
           nodeIndex: 3,
           nodeType: "FINAL_REPORT",
           score: run.currentFitScore ?? undefined,
-          reasoning:
-            "Stub report — set OPENROUTER_API_KEY to enable AI hiring summary.",
+          reasoning: [
+            "## Hiring summary (stub)",
+            "",
+            "AI is disabled for this environment. Set **`OPENROUTER_API_KEY`** to generate a full pipeline report after the quiz.",
+            "",
+            "### What you have now",
+            "",
+            "- **Resume (Node 1)** and **quiz (Node 2)** scores and reasoning are still stored on earlier nodes.",
+            "- This node is a placeholder so the application can complete without OpenRouter.",
+          ].join("\n"),
           payload: { stub: true, openRouterDisabled: true },
         });
         run.status = "COMPLETED";

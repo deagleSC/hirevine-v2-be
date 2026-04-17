@@ -35,7 +35,9 @@ export const finalHiringReportSchema = z.object({
     .string()
     .min(1)
     .max(16_000)
-    .describe("Short executive summary for the hiring manager"),
+    .describe(
+      "Short blurb for lists/previews; the full hiring summary lives in pipelineReportMarkdown and NodeResult.reasoning.",
+    ),
   pipelineReportMarkdown: z
     .string()
     .min(1)

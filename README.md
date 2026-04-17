@@ -188,7 +188,7 @@ Long-running or multi-step evaluation runs **outside** the request that creates 
 
 1. **Application created** — **Node 1** fetches resume text, runs **resume screening** (AI when `OPENROUTER_API_KEY` is set; otherwise a stub pass). May set status to `REJECTED` based on the job pipeline’s pass threshold.
 2. **Quiz stage** — When the run reaches **`NODE_2_PENDING`**, the candidate can load and submit the quiz via the applications API.
-3. **Quiz submitted** — **Node 3** produces a **hiring-manager-style summary** (AI when configured; otherwise a short stub).
+3. **Quiz submitted** — **Node 3** produces a **hiring-manager pipeline report** (Markdown) from resume + quiz node results (AI when `OPENROUTER_API_KEY` is set; otherwise a short Markdown stub). The report is stored on the Node 3 `NodeResult` as **`reasoning`** (Markdown) and in **`payload`** as structured fields (`executiveSummary`, `pipelineReportMarkdown`, `stageBreakdown`, `hireRecommendation`, etc.).
 
 Handlers live under `src/inngest/functions/`. Production registration requires the Inngest app **Serve URL** to point at `https://<your-api-host>/api/inngest` (see [DEPLOY.md](./DEPLOY.md)).
 

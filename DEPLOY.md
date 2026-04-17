@@ -86,6 +86,7 @@ Set `RESUME_UPLOAD_MAX_BYTES=5242880` if you want a 5 MiB cap and your host allo
 
 ## Troubleshooting
 
+- **PDF resume text extraction fails on Vercel (`pdf.worker.mjs` missing / fake worker)** — Serverless traces can omit `pdf-parse` worker assets. This repo sets `vercel.json` → `functions["src/server.ts"].includeFiles` to bundle `node_modules/pdf-parse/dist/**`, and the API installs DOM polyfills + an absolute worker path before parsing. If you change the server entry file name, mirror that key under `functions` so `includeFiles` still applies.
 - **Build warns about `functions` / unknown path** — If `vercel.json`’s `src/server.ts` key does not match what the build expects, remove the `functions` block and set **max duration** (and memory, if needed) under **Project → Settings → Functions**. With [Fluid compute](https://vercel.com/docs/fluid-compute), memory is often configured in the dashboard rather than in `vercel.json`.
 - **503 Database unavailable** — Wrong `MONGODB_URI`, IP allowlist, or Atlas paused tier.
 - **401/403 after login** — `JWT_SECRET` changed between deploys (sessions invalidated) or cookie `Secure`/domain mismatch.

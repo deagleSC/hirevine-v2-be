@@ -63,6 +63,7 @@ Rules:
   - "## Overall assessment" (how the stages combine; trade-offs)
   - "## Recommendation" (clear decision + why, plus next-step interview plan)
 - Keep executiveSummary short, but let pipelineReportMarkdown be the detailed report.
+- stageBreakdown must be consistent with pipelineReportMarkdown (same evidence and conclusions per stage).
 - Output only via the structured schema.`,
   });
 
